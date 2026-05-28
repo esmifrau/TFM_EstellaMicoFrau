@@ -1,0 +1,937 @@
+---
+title: "TFM"
+author: "Estel·la Micó Frau"
+date: "2026-05-06"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(comment = NULL, cache = FALSE, cache.lazy = FALSE, message= FALSE, warning = FALSE)
+```
+
+```{r, message=FALSE, results=FALSE}
+#'BioC
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+#BiocManager::install(c("xcms", "MsExperiment", "MetaboCoreUtils"))
+
+#'CRAN
+#install.packages("tidyverse")
+#install.packages("RColorBrewer")
+#install.packages("pheatmap")
+
+lapply(c("Spectra", "MsExperiment", "MetaboAnnotation", 
+         "MetaboCoreUtils", "tidyverse", "RColorBrewer", "pheatmap", "xcms"), 
+       library, character.only = TRUE)
+
+```
+```{r}
+# Creem un objecte MsExperiment
+msexp <- MsExperiment()
+# Amb els arxius .mzML
+path.mzML <- "~/Downloads/Serum/Serum_TFM"
+mzML.files <- list.files(path.mzML, pattern= ".mzML",
+                         recursive=T, full.names = T)
+msfls <- MsExperimentFiles(mzmls = mzML.files)
+experimentFiles(msexp) <- msfls
+# Diagnòstic
+diagnosis <- c("DM", "DM", "DM", "CT", "DM", "CT", "DM", "CT", "CT", "CT", "CT", "CT", "CT", "DM", "DM", "CT", "DM", "CT", "CT", "DM", "DM")
+# Afegim informació a l'objecte
+sampleData(msexp) <- DataFrame(
+    samples = gsub(".mzML","", basename(experimentFiles(msexp)[["mzmls"]])),
+    pheno = diagnosis)
+sp <- Spectra(experimentFiles(msexp)[["mzmls"]])
+spectra(msexp) <- sp
+
+msexp
+```
+```{r}
+#Establim enllaços entre les dades
+sampleData(msexp)$raw_file <- normalizePath(experimentFiles(msexp)$mzmls)
+
+msexp <- linkSampleData(msexp, with = "experimentFiles.mzmls", sampleIndex = c(1:21), withIndex = c(1:21))
+
+msexp <- linkSampleData(msexp, with = "sampleData.raw_file = spectra.dataOrigin")
+
+msexp
+
+```
+```{r}
+# Base peak chromatogram
+bpc <- chromatogram(msexp, aggregationFun = "max")
+
+group_colors <- brewer.pal(10, "Dark2")[1:length(unique(msexp@sampleData$pheno))]
+names(group_colors) <- unique(msexp@sampleData$pheno)
+
+plot(bpc, col = group_colors[msexp@sampleData$pheno], main = "BPC")
+
+bpc_bin <- bin(bpc, binSize = 1)
+bpc_mat <- cor(log2(do.call(cbind, lapply(bpc_bin, intensity))))
+colnames(bpc_mat) <- rownames(bpc_mat) <- msexp@sampleData$samples
+#bpc_mat <- do.call(cbind, lapply(bpc_bin, intensity))
+
+library(grid)
+
+# Heat-map amb les correlacions de Pearson
+cor(bpc_mat) |>
+    pheatmap(labels_row = msexp@sampleData$pheno, labels_col = msexp@sampleData$pheno)
+
+```
+
+```{r}
+# Carreguem el fitxer de la base de dades de pèptids i lípids
+db <- read_csv("Chebi_HMDB_Peptides_Lipids_2025_clean.csv")
+db <- db |>
+  filter(!is.na(MonoisotopicMass))
+```
+
+```{r}
+# Detecció de pics cromatogràfics
+library(MetaboCoreUtils)
+
+cwp <- xcms::CentWaveParam(ppm = 25,
+  peakwidth = c(20, 50),
+  snthresh = 10,
+  prefilter = c(3, 100),
+  mzCenterFun = "wMean",
+  integrate = 1L,
+  mzdiff = -0.001,
+  fitgauss = FALSE,
+  noise = 1000,
+  verboseColumns = FALSE,
+  roiList = list(),
+  firstBaselineCheck = TRUE,
+  roiScales = numeric(),
+  extendLengthMSW = FALSE,
+  verboseBetaColumns = FALSE)
+
+compound_names <- c("7-Ketocholesterol", "22:4 cholesteryl ester", "CE(18:1)", "CE(18:2)", "CE(18:3)", "CE(20:4)", "CE(22:6)", "PHOSPHATIDYLETHANOLAMINE", "PE(38:5)", "PC(o-16:0/22:6(4Z,7Z,10Z,13Z,16Z,19Z))", "PC(18:0/20:3)", "lysophosphatidylcholine(22:0)", "PS(38:5)", "lysophosphatidylserine(20:0)", "LPC(O-18:1/0:0)", "LPC(18:0/0:0)", "LPC(O-18:1/0:0)")
+
+db_compounds <- db %>%
+  filter(toupper(Name) %in% toupper(compound_names)) %>%
+  select(Name, MolecularFormula, MonoisotopicMass)
+
+db_compounds$mzH <- mass2mz(calculateMass(db_compounds$MolecularFormula),
+                           "[M+H]+")[,1]
+db_compounds$mzNa <- mass2mz(calculateMass(db_compounds$MolecularFormula),
+                           "[M+Na]+")[,1]
+db_compounds$mzK <- mass2mz(calculateMass(db_compounds$MolecularFormula),
+                           "[M+K]+")[,1]
+
+msexp <- findChromPeaks(msexp, param = cwp)
+
+
+#' m/z - rt
+par(mfrow = c(2, 2))
+plotChromPeaks(msexp, 1)
+plotChromPeaks(msexp, 5)
+plotChromPeaks(msexp, 6)
+plotChromPeaks(msexp, 19)
+
+names(db_compounds$mzH) <- db_compounds$Name
+names(db_compounds$mzNa) <- db_compounds$Name
+names(db_compounds$mzK) <- db_compounds$Name
+names(db_compounds$MonoisotopicMass) <- db_compounds$Name
+
+c("7-Ketocholesterol", "22:4 cholesteryl ester", "CE(18:1)", "CE(18:2)", "CE(18:3)", "CE(20:4)", "CE(22:6)", "PHOSPHATIDYLETHANOLAMINE", "PE(38:5)", "PC(o-16:0/22:6(4Z,7Z,10Z,13Z,16Z,19Z))", "PC(18:0/20:3)", "lysophosphatidylcholine(22:0)", "PS(38:5)", "lysophosphatidylserine(20:0)", "LPC(O-18:1/0:0)", "LPC(18:0/0:0)", "LPC(O-18:1/0:0)")
+
+pk_H <- chromPeaks(msexp, mz = db_compounds$mzH["lysophosphatidylserine(20:0)"])
+pk_M <- chromPeaks(msexp, mz = db_compounds$MonoisotopicMass["lysophosphatidylserine(20:0)"])
+
+eic_H <- chromPeakChromatograms(msexp, peaks = rownames(pk_H)[1])
+
+ms1_H <- chromPeakSpectra(msexp, msLevel = 1, method = "closest_rt",
+                                 peaks = rownames(pk_H)[1])
+
+plot(eic_H)
+
+abline(v = rtime(ms1_H), lty = 2)
+
+plotSpectra(ms1_H, xlim = c(550,555), ylim= c(0, 800000))
+
+points(db_compounds$mzH["lysophosphatidylserine(20:0)"], y = -300, pch = 2, col = "red")
+points(db_compounds$MonoisotopicMass["lysophosphatidylserine(20:0)"], y = -300, pch = 2, col = "blue")
+
+pd <- peaksData(ms1_H)[[1]] # mz i intensitat
+
+iso_idx <- isotopologues(pd, seedMz = db_compounds$mzH["lysophosphatidylserine(20:0)"])
+iso_idx
+
+cols <- rep("#00000040", lengths(ms1_H)[1])
+
+cols[iso_idx[[1]]] <- "#ff0000ff"
+
+plotSpectra(ms1_H, col = cols, xlim = c(550,555), ylim= c(0, 800000), lwd = 2)
+
+
+```
+```{r}
+# Alineament i correcció  del temps de retenció
+bpc_raw <- chromatogram(msexp, aggregationFun = "max", chromPeaks = "none")
+plot(bpc_raw, peakType = "none")
+
+pdp <- PeakDensityParam(sampleGroups = sampleData(msexp)$pheno, bw = 1.8,
+                        minFraction = 1, binSize = 0.01, ppm = 10)
+msexp <- groupChromPeaks(msexp, pdp)
+
+pgm <- adjustRtimePeakGroups(msexp, PeakGroupsParam(minFraction = 1))
+head(pgm)
+
+
+pgp <- PeakGroupsParam(minFraction = 1, span = 0.6)
+msexp <- adjustRtime(msexp, param = pgp)
+plotAdjustedRtime(msexp)
+grid()
+
+par(mfrow = c(2, 1))
+
+
+plot(bpc_raw)
+grid()
+
+
+chromatogram(msexp, aggregationFun = "max", chromPeaks = "none") |>
+    plot()
+grid()
+
+
+#dropAdjustedRtime(msexp)
+
+#Anàlisi de correspondència
+
+chr_LPS <- chromatogram(msexp, mz = db_compounds$mzH["lysophosphatidylserine(20:0)"] + c(-0.005, 0.005))
+pdp <- PeakDensityParam(sampleGroups = sampleData(msexp)$pheno, bw=3)
+plotChromPeakDensity(chr_LPS, param = pdp)
+
+
+pdp <- PeakDensityParam(sampleGroups = sampleData(msexp)$pheno, bw=3, minFraction=0.5, binSize=0.01, ppm=10)
+
+msexp <- groupChromPeaks(msexp, param=pdp)
+msexp
+
+
+# Gap filling
+any_na <- featureValues(msexp) |>
+  rowSums() |>
+  is.na()
+table(any_na)
+
+mse <- fillChromPeaks(msexp, param= ChromPeakAreaParam())
+
+any_na <- featureValues(mse) |>
+  rowSums() |>
+  is.na()
+table(any_na)
+
+
+colnames(featureValues(mse))
+mse@sampleData@rownames <- paste0(mse@sampleData@listData$samples, ".mzML")
+
+# Passem a objecte Summarized Experiment
+library(SummarizedExperiment)
+res <- xcms::quantify(mse, method="sum")
+
+```
+
+```{r}
+mzRT.info <- featureDefinitions(mse)
+mzRT.abundance <- featureValues(mse)
+
+#BiocManager::install("preprocessCore")
+library(preprocessCore)
+# Normalització i transformació
+int_qnorm <- preprocessCore::normalize.quantiles(assay(res))
+log2int_qnorm <- log2(int_qnorm+1)
+log2int_qnorm_scaled <- scale(log2int_qnorm)
+rownames(log2int_qnorm_scaled) <- rownames(assay(res))
+colnames(log2int_qnorm_scaled) <- colnames(assay(res))
+
+```
+
+```{r}
+# Anotació
+library(limma)
+library(MetaboCoreUtils)
+library(MetaboAnnotation)
+
+parm <- Mass2MzParam(adducts = c("[M+H]+", "[M+Na]+", "[M+K]+"),
+                           tolerance = 0.005, ppm = 10)
+
+
+res_mz <- data.frame(feature = rownames(rowData(res)), mz = rowData(res)$mzmed, rt = rowData(res)$rtmed)
+tg_mz <- data.frame(name = db_compounds$Name, exactmass = db_compounds$MonoisotopicMass)
+
+match_mz_compounds <- MetaboAnnotation::matchValues(res_mz,tg_mz, param= parm)
+matched_data <- matchedData(match_mz_compounds)
+matched_data <- matched_data[!is.na(matched_data$target_name), ]
+
+matched_features <- matched_data$feature
+
+matched_res <- res[matched_features, ]
+
+rowData(matched_res) <- cbind(rowData(matched_res), matched_data)
+
+rowData(matched_res)
+```
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+
+# Comparació de la intensitat per a unes features seleccionades
+df_matched <- as.data.frame(assay(matched_res))
+df_matched$feature <- rownames(rowData(matched_res))
+
+df_matched_l <- df_matched %>%
+  pivot_longer(cols = -feature, names_to = "sample", values_to = "intensity")
+
+sample_info <- data.frame(
+  sample = colnames(matched_res),
+  group = matched_res$pheno
+)
+
+df_matched_l <- left_join(df_matched_l, sample_info, by = "sample")
+
+df_matched_l$group <- factor(df_matched_l$group, levels = c("CT", "DM"))
+
+plot_compare_feat <- function(df) {
+  ggplot(df,
+       aes(x = group, y = intensity, fill = group)) +
+    geom_boxplot(alpha = 0.3, outlier.shape = NA) + 
+    geom_jitter(aes(color = group), width = 0.15, alpha = 0.7, size = 2) +
+    facet_wrap(~ feature, scales = "free_y", nrow = 3) + 
+    stat_compare_means(method = "wilcox.test", 
+                       label = "p.signif", 
+                       label.x = 1.5) +  
+    scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+    scale_color_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+    labs(
+      x = "Grup",
+      y = "Intensitat (log2)",
+      title = paste("Comparació d'Intensitat)"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      strip.text = element_text(face = "bold", size = 11),
+      panel.grid.minor = element_blank()
+    ))
+}
+
+unique_features <- unique(df_matched_l$feature)
+
+half_feat <- ceiling(length(unique_features) / 2)
+features1 <- unique_features[1:half_feat]
+features2 <- unique_features[(half_feat + 1):length(unique_features)]
+
+df_matched_l1 <- df_matched_l[df_matched_l$feature %in% features1, ]
+df_matched_l2 <- df_matched_l[df_matched_l$feature %in% features2, ]
+
+
+plot_compare_feat(df_matched_l1)
+plot_compare_feat(df_matched_l2)
+
+
+```
+
+```{r}
+library(limma)
+# Comparació estadística
+groups <- factor(matched_res$pheno, levels = c("CT", "DM"))
+
+design <- model.matrix(~ 0 + groups)
+colnames(design) <- c("CT", "DM")
+
+fit <- lmFit(assay(matched_res), design)
+contrast.matrix <- makeContrasts(DM_vs_CT = DM - CT, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+fit2_res <- topTable(fit2, coef = "DM_vs_CT", number = Inf, sort.by = "P")
+fit2_res <- cbind(as.data.frame(rowData(matched_res)), fit2_res)
+
+ggplot(fit2_res, aes(x = logFC, y = -log10(P.Value))) +
+  geom_point(aes(color = adj.P.Val < 0.05)) +
+  geom_text(aes(label = ifelse(adj.P.Val < 0.1, feature, "")), 
+            vjust = 1.5, size = 3) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "Volcano Plot: DM vs CT",
+       x = "log2 Fold Change",
+       y = "-log10 P-Value")
+
+```
+
+
+```{r}
+# Amb tots els compostos
+# Comparació de les principals classes químiques detectades amb major intensitat
+parm <- Mass2MzParam(adducts = c("[M+H]+", "[M+Na]+", "[M+K]+"),
+                           tolerance = 0.05, ppm = 30)
+
+res_mz <- data.frame(feature = rownames(rowData(res)), mz = rowData(res)$mzmed, rt = rowData(res)$rtmed)
+tg_mz <- data.frame(name = db$Name, exactmass = db$MonoisotopicMass, class = db$MAIN_CLASS)
+
+match_mz_compounds <- MetaboAnnotation::matchValues(res_mz,tg_mz, param= parm)
+matched_data <- matchedData(match_mz_compounds)
+matched_data <- matched_data[!is.na(matched_data$target_name), ]
+
+matched_features <- matched_data$feature
+matched_res <- res[matched_features, ]
+
+rownames(matched_data) <- matched_data$feature
+
+matched_best <- as.data.frame(matched_data) %>%
+  filter(!is.na(target_name)) %>%
+  filter(!is.na(target_class)) %>%
+  group_by(mz) %>%
+  slice_min(ppm_error, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+intensitats_long <- as.data.frame(assay(matched_res)) %>%
+  mutate(feature = rownames(.)) %>%
+  pivot_longer(cols = -feature, names_to = "sample", values_to = "intensity")
+
+df_counts <- intensitats_long %>%
+  left_join(sample_info, by = "sample") %>%
+  left_join(matched_best %>% select(feature, target_class), by = "feature") %>%
+  filter(!is.na(target_class))
+
+mean_intensity_sample <- df_counts %>%
+  group_by(sample, group, target_class) %>%
+  summarise(
+    mean_int = mean(intensity, na.rm = TRUE),
+    .groups = "drop") %>%
+  arrange(desc(mean_int))
+
+mean_intensity_group <- mean_intensity_sample %>%
+  group_by(group, target_class) %>%
+  summarise(
+    avg_intensity = mean(mean_int, na.rm = TRUE),
+    sd_intensity = sd(mean_int, na.rm=TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(avg_intensity))
+
+top_15_classes <- mean_intensity_group %>%
+  group_by(target_class) %>%
+  summarise(total_avg = mean(avg_intensity)) %>%
+  arrange(desc(total_avg)) %>%
+  slice_head(n = 15) %>%
+  pull(target_class)
+
+mean_intensity_sample <- mean_intensity_sample %>%
+  filter(target_class %in% top_15_classes)
+
+mean_intensity_group <- mean_intensity_group %>%
+  filter(target_class %in% top_15_classes)
+
+
+ggplot(mean_intensity_sample, 
+       aes(x = group, y = mean_int, fill = group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5) +
+  facet_wrap(~target_class, scales = "free_y") +
+  scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+  theme_minimal() +
+  labs(
+    title = "Intensitat mitjana",
+    y = "Intensitat",
+    x = "Grup"
+  ) +
+  theme(strip.text = element_text(size = 8)) 
+ 
+
+ggplot(mean_intensity_group, 
+       aes(x = reorder(target_class, avg_intensity), 
+           y = avg_intensity, 
+           fill = group)) +
+  geom_col(position = position_dodge(width = 0.8), color = "black", width = 0.7) +
+  geom_errorbar(aes(ymin = avg_intensity - sd_intensity, 
+                    ymax = avg_intensity + sd_intensity),
+                position = position_dodge(width = 0.8), 
+                width = 0.25, alpha = 0.5) +
+  coord_flip() +
+  scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+  theme_minimal() +
+  labs(
+    title = "Intensitat mitjana",
+    x = "Classe química",
+    y = "Intensitat mitjana",
+    fill = "Grup"
+  ) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    legend.position = "bottom"
+  )
+
+
+```
+
+```{r}
+# Es repeteix tot el procediment amb dades tissulars:
+msexp <- MsExperiment()
+
+path.mzML <- "~/Downloads/Teixit/Teixit_TFM"
+mzML.files <- list.files(path.mzML, pattern= ".mzML",
+                         recursive=T, full.names = T)
+msfls <- MsExperimentFiles(mzmls = mzML.files)
+experimentFiles(msexp) <- msfls
+
+
+diagnosis <- c("DM", "DM", "DM", "CT", "DM", "CT", "DM", "CT", "CT", "CT", "CT", "CT", "CT", "DM", "DM", "CT", "DM", "CT", "CT", "DM", "DM")
+
+
+sampleData(msexp) <- DataFrame(
+    samples = gsub(".mzML","", basename(experimentFiles(msexp)[["mzmls"]])),
+    pheno = diagnosis)
+sp <- Spectra(experimentFiles(msexp)[["mzmls"]])
+spectra(msexp) <- sp
+
+msexp
+```
+```{r}
+
+sampleData(msexp)$raw_file <- normalizePath(experimentFiles(msexp)$mzmls)
+
+msexp <- linkSampleData(msexp, with = "experimentFiles.mzmls", sampleIndex = c(1:21), withIndex = c(1:21))
+
+msexp <- linkSampleData(msexp, with = "sampleData.raw_file = spectra.dataOrigin")
+
+msexp
+
+```
+```{r}
+
+bpc <- chromatogram(msexp, aggregationFun = "max")
+
+
+group_colors <- brewer.pal(10, "Dark2")[1:length(unique(msexp@sampleData$pheno))]
+names(group_colors) <- unique(msexp@sampleData$pheno)
+
+plot(bpc, col = group_colors[msexp@sampleData$pheno], main = "BPC")
+
+
+bpc_bin <- bin(bpc, binSize = 1)
+bpc_mat <- cor(log2(do.call(cbind, lapply(bpc_bin, intensity))))
+colnames(bpc_mat) <- rownames(bpc_mat) <- msexp@sampleData$samples
+
+
+library(grid)
+
+
+cor(bpc_mat) |>
+    pheatmap(labels_row = msexp@sampleData$pheno, labels_col = msexp@sampleData$pheno)
+
+```
+```{r}
+library(tidyverse)
+db <- read_csv("Chebi_HMDB_Peptides_Lipids_2025_clean.csv")
+db <- db |>
+  filter(!is.na(MonoisotopicMass))
+```
+
+
+```{r}
+
+library(MetaboCoreUtils)
+
+cwp <- xcms::CentWaveParam(ppm = 25,
+  peakwidth = c(20, 50),
+  snthresh = 10,
+  prefilter = c(3, 100),
+  mzCenterFun = "wMean",
+  integrate = 1L,
+  mzdiff = -0.001,
+  fitgauss = FALSE,
+  noise = 1000,
+  verboseColumns = FALSE,
+  roiList = list(),
+  firstBaselineCheck = TRUE,
+  roiScales = numeric(),
+  extendLengthMSW = FALSE,
+  verboseBetaColumns = FALSE)
+
+compound_names <- c("7-Ketocholesterol", "22:4 cholesteryl ester", "CE(18:1)", "CE(18:2)", "CE(18:3)", "CE(20:4)", "CE(22:6)", "PHOSPHATIDYLETHANOLAMINE", "PE(38:5)", "PC(o-16:0/22:6(4Z,7Z,10Z,13Z,16Z,19Z))", "PC(18:0/20:3)", "lysophosphatidylcholine(22:0)", "PS(38:5)", "lysophosphatidylserine(20:0)", "LPC(O-18:1/0:0)", "LPC(18:0/0:0)", "LPC(O-18:1/0:0)")
+
+db_compounds <- db %>%
+  filter(toupper(Name) %in% toupper(compound_names)) %>%
+  select(Name, MolecularFormula, MonoisotopicMass)
+
+db_compounds$mzH <- mass2mz(calculateMass(db_compounds$MolecularFormula),
+                           "[M+H]+")[,1]
+db_compounds$mzNa <- mass2mz(calculateMass(db_compounds$MolecularFormula),
+                           "[M+Na]+")[,1]
+db_compounds$mzK <- mass2mz(calculateMass(db_compounds$MolecularFormula),
+                           "[M+K]+")[,1]
+
+msexp <- findChromPeaks(msexp, param = cwp)
+
+
+#' m/z - rt
+par(mfrow = c(2, 2))
+plotChromPeaks(msexp, 1)
+plotChromPeaks(msexp, 5)
+plotChromPeaks(msexp, 6)
+plotChromPeaks(msexp, 19)
+
+names(db_compounds$mzH) <- db_compounds$Name
+names(db_compounds$mzNa) <- db_compounds$Name
+names(db_compounds$mzK) <- db_compounds$Name
+names(db_compounds$MonoisotopicMass) <- db_compounds$Name
+
+pk_7ketochol <- chromPeaks(msexp, mz = db_compounds$mzH["7-Ketocholesterol"])
+chromPeaks(msexp, mz = db_compounds$mzK["7-Ketocholesterol"])
+chromPeaks(msexp, mz = db_compounds$MonoisotopicMass["7-Ketocholesterol"])
+
+
+eic_7ketochol <- chromPeakChromatograms(msexp, peaks = rownames(pk_7ketochol)[1])
+
+ms1_7ketochol <- chromPeakSpectra(msexp, msLevel = 1, method = "closest_rt",
+                                 peaks = rownames(pk_7ketochol)[1])
+
+
+plot(eic_7ketochol)
+
+abline(v = rtime(ms1_7ketochol), lty = 2)
+
+plotSpectra(ms1_7ketochol, xlim = c(400,405))
+
+points(db_compounds$mzH["7-Ketocholesterol"], y = -300, pch = 2, col = "red")
+
+pd <- peaksData(ms1_7ketochol)[[1]]
+
+iso_idx <- isotopologues(pd, seedMz = db_compounds$mzH["7-Ketocholesterol"])
+iso_idx
+
+cols <- rep("#00000040", lengths(ms1_7ketochol)[1])
+
+cols[iso_idx[[1]]] <- "#ff0000ff"
+
+plotSpectra(ms1_7ketochol, col = cols, xlim = c(400,410),lwd = 2)
+
+
+```
+```{r}
+
+bpc_raw <- chromatogram(msexp, aggregationFun = "max", chromPeaks = "none")
+plot(bpc_raw, peakType = "none")
+
+
+pdp <- PeakDensityParam(sampleGroups = sampleData(msexp)$pheno, bw = 1.8,
+                        minFraction = 1, binSize = 0.01, ppm = 10)
+msexp <- groupChromPeaks(msexp, pdp)
+
+pgm <- adjustRtimePeakGroups(msexp, PeakGroupsParam(minFraction = 1))
+head(pgm)
+
+pgp <- PeakGroupsParam(minFraction = 1, span = 0.6)
+msexp <- adjustRtime(msexp, param = pgp)
+plotAdjustedRtime(msexp)
+grid()
+
+par(mfrow = c(2, 1))
+
+plot(bpc_raw)
+grid()
+
+
+chromatogram(msexp, aggregationFun = "max", chromPeaks = "none") |>
+    plot()
+grid()
+
+chr_7ketochol <- chromatogram(msexp, mz = db_compounds$mzH["7-Ketocholesterol"] + c(-0.005, 0.005))
+pdp <- PeakDensityParam(sampleGroups = sampleData(msexp)$pheno, bw=3)
+plotChromPeakDensity(chr_7ketochol, param = pdp)
+
+
+
+chr_ce18_2 <- chromatogram(msexp, mz = db_compounds$mzH["CE(18:2)"] + c(-0.005, 0.005))
+plotChromPeakDensity(chr_ce18_2, param = pdp)
+
+pdp <- PeakDensityParam(sampleGroups = sampleData(msexp)$pheno, bw=3, minFraction=0.5, binSize=0.01, ppm=10)
+
+msexp <- groupChromPeaks(msexp, param=pdp)
+msexp
+
+chr_ce18_2 <- chromatogram(msexp, mz = db_compounds$mzH["CE(18:2)"] + c(-0.005, 0.005), aggregationFun = "max")
+plotChromPeakDensity(chr_ce18_2, pdp, simulate=FALSE)
+
+any_na <- featureValues(msexp) |>
+  rowSums() |>
+  is.na()
+table(any_na)
+
+mse <- fillChromPeaks(msexp, param= ChromPeakAreaParam())
+
+any_na <- featureValues(mse) |>
+  rowSums() |>
+  is.na()
+table(any_na)
+
+
+colnames(featureValues(mse))
+mse@sampleData@rownames <- paste0(mse@sampleData@listData$samples, ".mzML")
+
+library(SummarizedExperiment)
+res <- xcms::quantify(mse, method="sum")
+
+```
+
+```{r}
+mzRT.info <- featureDefinitions(mse)
+mzRT.abundance <- featureValues(mse)
+
+#BiocManager::install("preprocessCore")
+library(preprocessCore)
+
+int_qnorm <- preprocessCore::normalize.quantiles(assay(res))
+log2int_qnorm <- log2(int_qnorm+1)
+log2int_qnorm_scaled <- scale(log2int_qnorm)
+rownames(log2int_qnorm_scaled) <- rownames(assay(res))
+colnames(log2int_qnorm_scaled) <- colnames(assay(res))
+
+```
+
+```{r}
+
+library(limma)
+library(MetaboCoreUtils)
+library(MetaboAnnotation)
+
+
+parm <- Mass2MzParam(adducts = c("[M+H]+", "[M+Na]+", "[M+K]+"),
+                           tolerance = 0.005, ppm = 10)
+
+
+res_mz <- data.frame(feature = rownames(rowData(res)), mz = rowData(res)$mzmed, rt = rowData(res)$rtmed)
+tg_mz <- data.frame(name = db_compounds$Name, exactmass = db_compounds$MonoisotopicMass)
+
+match_mz_compounds <- MetaboAnnotation::matchValues(res_mz,tg_mz, param= parm)
+matched_data <- matchedData(match_mz_compounds)
+matched_data <- matched_data[!is.na(matched_data$target_name), ]
+
+matched_features <- matched_data$feature
+
+matched_res <- res[matched_features, ]
+
+rowData(matched_res) <- cbind(rowData(matched_res), matched_data)
+
+rowData(matched_res)
+```
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+
+df_matched <- as.data.frame(assay(matched_res))
+df_matched$feature <- rownames(rowData(matched_res))
+
+df_matched_l <- df_matched %>%
+  pivot_longer(cols = -feature, names_to = "sample", values_to = "intensity")
+
+sample_info <- data.frame(
+  sample = colnames(matched_res),
+  group = matched_res$pheno
+)
+
+df_matched_l <- left_join(df_matched_l, sample_info, by = "sample")
+
+df_matched_l$group <- factor(df_matched_l$group, levels = c("CT", "DM"))
+
+plot_compare_feat <- function(df) {
+  ggplot(df,
+       aes(x = group, y = intensity, fill = group)) +
+    geom_boxplot(alpha = 0.3, outlier.shape = NA) + 
+    geom_jitter(aes(color = group), width = 0.15, alpha = 0.7, size = 2) +
+    facet_wrap(~ feature, scales = "free_y", nrow = 3) + 
+    stat_compare_means(method = "wilcox.test", 
+                       label = "p.signif", 
+                       label.x = 1.5) +  
+    scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+    scale_color_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+    labs(
+      x = "Grup",
+      y = "Intensitat (log2)",
+      title = paste("Comparació d'Intensitat)"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      strip.text = element_text(face = "bold", size = 11),
+      panel.grid.minor = element_blank()
+    ))
+}
+
+unique_features <- unique(df_matched_l$feature)
+
+half_feat <- ceiling(length(unique_features) / 2)
+features1 <- unique_features[1:half_feat]
+features2 <- unique_features[(half_feat + 1):length(unique_features)]
+
+df_matched_l1 <- df_matched_l[df_matched_l$feature %in% features1, ]
+df_matched_l2 <- df_matched_l[df_matched_l$feature %in% features2, ]
+
+
+plot_compare_feat(df_matched_l1)
+plot_compare_feat(df_matched_l2)
+
+
+```
+
+```{r}
+library(limma)
+
+groups <- factor(matched_res$pheno, levels = c("CT", "DM"))
+
+design <- model.matrix(~ 0 + groups)
+colnames(design) <- c("CT", "DM")
+
+fit <- lmFit(assay(matched_res), design)
+contrast.matrix <- makeContrasts(DM_vs_CT = DM - CT, levels = design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+
+fit2_res <- topTable(fit2, coef = "DM_vs_CT", number = Inf, sort.by = "P")
+fit2_res <- cbind(as.data.frame(rowData(matched_res)), fit2_res)
+
+ggplot(fit2_res, aes(x = logFC, y = -log10(P.Value))) +
+  geom_point(aes(color = adj.P.Val < 0.05)) +
+  geom_text(aes(label = ifelse(adj.P.Val < 0.1, feature, "")), 
+            vjust = 1.5, size = 3) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(title = "Volcano Plot: DM vs CT",
+       x = "log2 Fold Change",
+       y = "-log10 P-Value")
+
+ggplot(fit2_res, aes(x = feature, y = logFC, fill = logFC > 0)) +
+  geom_bar(stat = "identity", color = "black", alpha = 0.8) +
+  coord_flip() + 
+  scale_fill_manual(values = c("TRUE" = "#E41A1C", "FALSE" = "#377EB8"), 
+                    labels = c("CT", "DM"), name = "Tendència") +
+  labs(
+    title = "Canvi d'expressió (log2 Fold Change)",
+    subtitle = "DM vs Control",
+    x = "Metabòlit",
+    y = "log2(Fold Change)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(face = "bold"))
+```
+
+De tots els compostos:
+
+```{r}
+
+library(limma)
+library(MetaboCoreUtils)
+library(MetaboAnnotation)
+
+
+parm <- Mass2MzParam(adducts = c("[M+H]+", "[M+Na]+", "[M+K]+"),
+                           tolerance = 0.05, ppm = 30)
+
+res_mz <- data.frame(feature = rownames(rowData(res)), mz = rowData(res)$mzmed, rt = rowData(res)$rtmed)
+tg_mz <- data.frame(name = db$Name, exactmass = db$MonoisotopicMass, class = db$MAIN_CLASS)
+
+match_mz_compounds <- MetaboAnnotation::matchValues(res_mz,tg_mz, param= parm)
+matched_data <- matchedData(match_mz_compounds)
+matched_data <- matched_data[!is.na(matched_data$target_name), ]
+
+matched_features <- matched_data$feature
+matched_res <- res[matched_features, ]
+
+rownames(matched_data) <- matched_data$feature
+
+matched_best <- as.data.frame(matched_data) %>%
+  filter(!is.na(target_name)) %>%
+  filter(!is.na(target_class)) %>%
+  group_by(mz) %>%
+  slice_min(ppm_error, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+intensitats_long <- as.data.frame(assay(matched_res)) %>%
+  mutate(feature = rownames(.)) %>%
+  pivot_longer(cols = -feature, names_to = "sample", values_to = "intensity")
+
+df_counts <- intensitats_long %>%
+  left_join(sample_info, by = "sample") %>%
+  left_join(matched_best %>% select(feature, target_class), by = "feature") %>%
+  filter(!is.na(target_class))
+
+mean_intensity_sample <- df_counts %>%
+  group_by(sample, group, target_class) %>%
+  summarise(
+    mean_int = mean(intensity, na.rm = TRUE),
+    .groups = "drop") %>%
+  arrange(desc(mean_int))
+
+mean_intensity_group <- mean_intensity_sample %>%
+  group_by(group, target_class) %>%
+  summarise(
+    avg_intensity = mean(mean_int, na.rm = TRUE),
+    sd_intensity = sd(mean_int, na.rm=TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(avg_intensity))
+
+top_15_classes <- mean_intensity_group %>%
+  group_by(target_class) %>%
+  summarise(total_avg = mean(avg_intensity)) %>%
+  arrange(desc(total_avg)) %>%
+  slice_head(n = 15) %>%
+  pull(target_class)
+
+mean_intensity_sample <- mean_intensity_sample %>%
+  filter(target_class %in% top_15_classes)
+
+mean_intensity_group <- mean_intensity_group %>%
+  filter(target_class %in% top_15_classes)
+
+
+ggplot(mean_intensity_sample, 
+       aes(x = group, y = mean_int, fill = group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5) +
+  facet_wrap(~target_class, scales = "free_y") +
+  scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+  theme_minimal() +
+  labs(
+    title = "Intensitat mitjana",
+    y = "Intensitat",
+    x = "Grup"
+  ) +
+  theme(strip.text = element_text(size = 8)) 
+ 
+
+ggplot(mean_intensity_group, 
+       aes(x = reorder(target_class, avg_intensity), 
+           y = avg_intensity, 
+           fill = group)) +
+  geom_col(position = position_dodge(width = 0.8), color = "black", width = 0.7) +
+  geom_errorbar(aes(ymin = avg_intensity - sd_intensity, 
+                    ymax = avg_intensity + sd_intensity),
+                position = position_dodge(width = 0.8), 
+                width = 0.25, alpha = 0.5) +
+  coord_flip() +
+  scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+  theme_minimal() +
+  labs(
+    title = "Intensitat mitjana",
+    x = "Classe química",
+    y = "Intensitat mitjana",
+    fill = "Grup"
+  ) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    legend.position = "bottom"
+  )
+
+
+```
+
+

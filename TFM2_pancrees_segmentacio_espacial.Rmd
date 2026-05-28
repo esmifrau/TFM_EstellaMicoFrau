@@ -1,0 +1,1991 @@
+---
+title: "TFM2"
+author: "Estel·la Micó Frau"
+date: "2026-04-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(comment = NULL, cache = FALSE, cache.lazy = FALSE, message= FALSE, warning = FALSE)
+```
+
+```{r}
+# Carreguem el paquet rMSI2
+library(rMSI2)
+
+# Carreguem la matriu de pics
+pks2 <- rMSI2::LoadPeakMatrix("merged-peakmatrix.pkmat")
+# Incloem el nom de la mostra a cada píxel
+sample_name_px2 <- rep(pks2$names, times = pks2$numPixels)
+# Incloem les coordenades espacials
+coords2 <- as.data.frame(pks2$pos)
+colnames(coords2) <- c("x", "y")
+# En un data.frame de metadades
+pixel_metadata2 <- data.frame(
+  sample    = sample_name_px2,
+  x         = coords2$x,
+  y         = coords2$y)
+
+# Seleccionem la mostra 4M8
+idx4M8 <- which(pixel_metadata2$sample == "241216_Au_P_MPc_OIO_4M8_x3-proc")
+pks4M8<- pks2[idx4M8,]
+
+# Incloiem els noms de les mostres per a cada píxel 
+sample_name_px4M8 <- rep(pks4M8$names, times = pks4M8$numPixels)
+#i les coordenades espacials
+coords4M8 <- as.data.frame(pks4M8$pos)
+colnames(coords4M8) <- c("x", "y")
+# en un nou data.frame per a la mostra 4M8
+pixel_metadata4M8 <- data.frame(
+  sample    = sample_name_px4M8,
+  x         = coords4M8$x,
+  y         = coords4M8$y)
+
+# m/z amb una major variància:
+var_mz <- apply(pks4M8$intensity, 2, var)
+idx_var <- order(var_mz, decreasing = TRUE)[1]
+#Visualització d'aquest data.frame:
+rMSI2::plotPeakImage(pks4M8, column=idx_var)
+
+```
+\
+## Normalització, transformació i reducció dimensional 
+
+```{r}
+# Normalització de les dades amb TIC
+pks4M8$intensityTIC <- pks4M8$intensity / pks4M8$normalizations$TIC
+```
+
+### PCA
+
+```{r}
+# Transformació logarítmica de la intensitat
+set.seed(111)
+log2intensity4M8_TIC <- log2(pks4M8$intensityTIC+1)
+# Anàlisi de components principals
+pca4M8 <- prcomp(log2intensity4M8_TIC,  center=TRUE, scale=TRUE)
+# Resultats de l'anàlisi
+pca4M8_df <- data.frame(
+  PC1 = pca4M8$x[,1],
+  PC2 = pca4M8$x[,2],
+  sample = pixel_metadata4M8$sample
+)
+
+library(ggplot2)
+# Gràfica amb els 2 primers components principals
+ggplot(pca4M8_df, aes(PC1, PC2)) +
+  geom_point(size = 0.3, alpha = 0.5) +
+  labs(title="PCA") +
+  theme_minimal()
+
+# Càlcul de la var. explicada per cada component
+var_exp4M8 <- pca4M8$sdev^2/sum(pca4M8$sdev^2)
+cumvar4M8 <- cumsum(var_exp4M8)
+
+#Representació gràfica:
+plot(cumvar4M8, type="b", ylab="Var acumulada", xlab="Components", xlim=c(0,2000))
+abline(h=0.80, col="red")
+```
+
+```{r}
+# Reducció de dimensionalitat: se seleccionen els 200 primers components
+pcs4M8 <- pca4M8$x[, 1:200]
+
+```
+
+
+### t-SNE
+
+```{r}
+library(Rtsne)
+# Ajust de l'escala de les dades d'intensitat
+log2intensity4M8_TIC_scaled <-scale(log2intensity4M8_TIC)
+# Reducció dimensional amb t-SNE
+set.seed(111)
+# dels primers components de la PCA
+tsne_pcs4M8_TIC <- Rtsne(pcs4M8, dims = 2, perplexity = 30, check_duplicates = FALSE)
+#de les dades completes
+tsne4M8_TIC <- Rtsne(log2intensity4M8_TIC_scaled, dims=2, perplexity=30, check_duplicates=FALSE)
+# Extraiem els resultats i els afegim a les metadades
+pixel_metadata4M8$tsne1 <- tsne4M8_TIC$Y[,1]
+pixel_metadata4M8$tsne2 <- tsne4M8_TIC$Y[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M8, aes(x = tsne1, y = tsne2)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "t-SNE") +
+  theme_minimal()
+# Extraiem els resultats i els afegim a les metadades
+pixel_metadata4M8$tsne1_pcs <- tsne_pcs4M8_TIC$Y[,1]
+pixel_metadata4M8$tsne2_pcs <- tsne_pcs4M8_TIC$Y[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M8, aes(x = tsne1_pcs, y = tsne2_pcs)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "PCA + t-SNE") +
+  theme_minimal()
+# Desem la reducció
+pcs_tsne4M8_TIC <- tsne4M8_TIC$Y[,1:2]
+pcs_pca_tsne4M8_TIC <- tsne_pcs4M8_TIC$Y[,1:2]
+```
+
+### UMAP
+
+```{r}
+# Reducció de dimensionalitat per UMAP
+library(uwot)
+umap4M8_TIC <- umap(log2intensity4M8_TIC_scaled, n_neighbors = 15, n_components = 2, metric = "euclidean")
+# Desem els resultats en les metadades
+pixel_metadata4M8$umap1 <- umap4M8_TIC[,1]
+pixel_metadata4M8$umap2 <- umap4M8_TIC[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M8, aes(x = umap1, y = umap2)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "UMAP de les mostres") +
+  theme_minimal()
+# Desem la reducció
+pcs_umap4M8_TIC <- umap4M8_TIC[,1:2]
+```
+
+## Clustering (k=4)
+
+```{r}
+# Elbow method (Mètode del colze) per estudiar el nombre òptim de clústers
+set.seed(111)
+k_range <- 2:10
+# Càlcul de la suma de quadrats entre clústers
+wcss4M8_TIC <- sapply(k_range, function(k) {
+  kmeans(pcs4M8, centers = k, nstart = 5, iter.max = 20)$tot.withinss
+})
+
+# Gràfica del colze
+plot(k_range, wcss4M8_TIC, type="b", pch=19, frame=FALSE, 
+     xlab="k",
+     ylab="WCSS",
+     main="Mètode del colze (TIC)")
+```
+\
+
+### K-means
+
+```{r}
+# K-means sobre les dades completes
+km4M8_TIC <- kmeans(log2intensity4M8_TIC_scaled, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_TIC <- as.factor(km4M8_TIC$cluster)
+# K-means sobre les dades reduïdes per PCA
+km_pca4M8_TIC <- kmeans(pcs4M8, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_TIC <- as.factor(km_pca4M8_TIC$cluster)
+# k-means sobre les dades reduïdes per t-SNE
+km_tsne4M8_TIC <- kmeans(pcs_tsne4M8_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_tsne_TIC <- as.factor(km_tsne4M8_TIC$cluster)
+# k-means sobre les dades reduïdes per PCA i t-SNE
+km_pca_tsne4M8_TIC <- kmeans(pcs_pca_tsne4M8_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M8_TIC$cluster)
+# K-means sobre les dades reduïdes per UMAP
+km_umap4M8_TIC <- kmeans(pcs_umap4M8_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_umap_TIC <- as.factor(km_umap4M8_TIC$cluster)
+
+# Representació gràfica
+library(ggplot2)
+plot_clusters <- function(df, clusters, k_val) {
+  ggplot(df) +
+    geom_raster(aes(x = x, y = y, fill = .data[[clusters]])) +
+    facet_wrap(~ sample, scales = "free") +
+    scale_fill_brewer(palette = "Set1", name = "Clúster") + 
+    theme_void() +
+    theme(
+      strip.text = element_text(size = 9, face = "bold"),
+      panel.spacing = unit(0.5, "lines"),
+      legend.position = "bottom"
+    ) +
+    labs(title = paste("k =", k_val, " -", clusters))
+}
+plot_clusters(pixel_metadata4M8, "kmeans_TIC", 4)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_TIC", 4)
+plot_clusters(pixel_metadata4M8, "kmeans_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M8, "kmeans_umap_TIC", 4)
+```
+
+\
+### FCM 
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+# FCM sobre les dades reduïdes per PCA
+fcm_pca4M8_TIC <- fcmR::fuzzyCmeans(pcs4M8, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_cluster_TIC <- fcm_pca4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_membership_TIC <- fcm_pca4M8_TIC$clustering$membership
+
+### 
+set.seed(111)
+# FCM sobre les dades reduïdes per t-SNE
+fcm_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M8_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_tsne_cluster_TIC <- fcm_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_tsne_membership_TIC <- fcm_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+# FCM sobre les dades reduïdes per PCA i t-SNE
+fcm_pca_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M8_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+# FCM sobre les dades reduïdes per UMAP
+fcm_umap4M8_TIC <- fcmR::fuzzyCmeans(pcs_umap4M8_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_umap_cluster_TIC <- fcm_umap4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_umap_membership_TIC <- fcm_umap4M8_TIC$clustering$membership
+
+# Representació gràfica:
+plot_fcm <- function(df, clusters, membership, k_val) {
+ggplot(df, aes(x = x, y = y)) +
+  geom_raster(aes(fill = as.factor(.data[[clusters]]), alpha = .data[[membership]])) +
+  facet_wrap(~ sample, scales = "free") +
+  scale_fill_brewer(palette = "Set1", name = "Clúster") +
+  scale_alpha_continuous(range = c(0, 1), name = "Membership") +
+  theme_void() +
+  theme(strip.text = element_text(size = 10, face = "bold"),
+    legend.position = "right",
+    panel.background = element_rect(fill = "white", color = NA)) +
+  labs(title = paste("k =", k_val, " -", clusters))
+}
+
+plot_fcm(pixel_metadata4M8, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 4)
+plot_fcm(pixel_metadata4M8, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 4)
+plot_fcm(pixel_metadata4M8, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 4)
+plot_fcm(pixel_metadata4M8, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 4)
+```
+\
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+# GMM sobre les dades reduïdes per PCA
+gmm_pca4M8_TIC <- Mclust(pcs4M8, 4)
+pixel_metadata4M8$gmm_pca_TIC <- as.factor(gmm_pca4M8_TIC$classification)
+# GMM sobre les dades reduïdes per PCA i t-SNE
+gmm_pca_tsne4M8_TIC <- Mclust(pcs_pca_tsne4M8_TIC, 4)
+pixel_metadata4M8$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M8_TIC$classification)
+# GMM sobre les dades reduïdes per t-SNE
+gmm_tsne4M8_TIC <- Mclust(pcs_tsne4M8_TIC, 4)
+pixel_metadata4M8$gmm_tsne_TIC <- as.factor(gmm_tsne4M8_TIC$classification)
+# GMM sobre les dades reduïdes per UMAP
+gmm_umap4M8_TIC <- Mclust(pcs_umap4M8_TIC, 4)
+pixel_metadata4M8$gmm_umap_TIC <- as.factor(gmm_umap4M8_TIC$classification)
+
+# Representació gràfica
+plot_clusters(pixel_metadata4M8, "gmm_pca_TIC", 4)
+plot_clusters(pixel_metadata4M8, "gmm_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M8, "gmm_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M8, "gmm_umap_TIC", 4)
+
+```
+\
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+#Amb les dades reduïdes per PCA
+#Distàncies euclidianes
+dist_pca4M8_TIC <- dist(pcs4M8, method = "euclidean")
+#HCLust
+hclust_pca4M8_TIC <- fastcluster::hclust(dist_pca4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M8_TIC, k=4))
+#Amb les dades reduïdes per PCA i t-SNE
+dist_pca_tsne4M8_TIC <- dist(pcs_pca_tsne4M8_TIC, method = "euclidean")
+hclust_pca_tsne4M8_TIC <- fastcluster::hclust(dist_pca_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M8_TIC, k=4))
+#Amb les dades reduïdes per t-SNE
+dist_tsne4M8_TIC <- dist(pcs_tsne4M8_TIC, method = "euclidean")
+hclust_tsne4M8_TIC <- fastcluster::hclust(dist_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M8_TIC, k=4))
+# Amb les dades reduïdes per UMAP
+dist_umap4M8_TIC <- dist(pcs_umap4M8_TIC, method = "euclidean")
+hclust_umap4M8_TIC <- fastcluster::hclust(dist_umap4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M8_TIC, k=4))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M8, "hclust_pca_TIC", 4)
+plot_clusters(pixel_metadata4M8, "hclust_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M8, "hclust_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M8, "hclust_umap_TIC", 4)
+```
+\
+## Clustering (k=10)
+
+### K-means
+
+```{r}
+km4M8_TIC <- kmeans(log2intensity4M8_TIC_scaled, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_TIC <- as.factor(km4M8_TIC$cluster)
+
+km_pca4M8_TIC <- kmeans(pcs4M8, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_TIC <- as.factor(km_pca4M8_TIC$cluster)
+
+km_tsne4M8_TIC <- kmeans(pcs_tsne4M8_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_tsne_TIC <- as.factor(km_tsne4M8_TIC$cluster)
+
+km_pca_tsne4M8_TIC <- kmeans(pcs_pca_tsne4M8_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M8_TIC$cluster)
+
+km_umap4M8_TIC <- kmeans(pcs_umap4M8_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_umap_TIC <- as.factor(km_umap4M8_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M8, "kmeans_TIC", 10)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_TIC", 10)
+plot_clusters(pixel_metadata4M8, "kmeans_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M8, "kmeans_umap_TIC", 10)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M8_TIC <- fcmR::fuzzyCmeans(pcs4M8, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_cluster_TIC <- fcm_pca4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_membership_TIC <- fcm_pca4M8_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M8_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_tsne_cluster_TIC <- fcm_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_tsne_membership_TIC <- fcm_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M8_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M8_TIC <- fcmR::fuzzyCmeans(pcs_umap4M8_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_umap_cluster_TIC <- fcm_umap4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_umap_membership_TIC <- fcm_umap4M8_TIC$clustering$membership
+
+
+
+plot_fcm(pixel_metadata4M8, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 10)
+plot_fcm(pixel_metadata4M8, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata4M8, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata4M8, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 10)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M8_TIC <- Mclust(pcs4M8, 10)
+pixel_metadata4M8$gmm_pca_TIC <- as.factor(gmm_pca4M8_TIC$classification)
+gmm_pca_tsne4M8_TIC <- Mclust(pcs_pca_tsne4M8_TIC, 10)
+pixel_metadata4M8$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M8_TIC$classification)
+gmm_tsne4M8_TIC <- Mclust(pcs_tsne4M8_TIC, 10)
+pixel_metadata4M8$gmm_tsne_TIC <- as.factor(gmm_tsne4M8_TIC$classification)
+gmm_umap4M8_TIC <- Mclust(pcs_umap4M8_TIC, 10)
+pixel_metadata4M8$gmm_umap_TIC <- as.factor(gmm_umap4M8_TIC$classification)
+
+plot_clusters(pixel_metadata4M8, "gmm_pca_TIC", 10)
+plot_clusters(pixel_metadata4M8, "gmm_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M8, "gmm_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M8, "gmm_umap_TIC", 10)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M8_TIC <- dist(pcs4M8, method = "euclidean")
+hclust_pca4M8_TIC <- fastcluster::hclust(dist_pca4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M8_TIC, k=10))
+
+dist_pca_tsne4M8_TIC <- dist(pcs_pca_tsne4M8_TIC, method = "euclidean")
+hclust_pca_tsne4M8_TIC <- fastcluster::hclust(dist_pca_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M8_TIC, k=10))
+
+dist_tsne4M8_TIC <- dist(pcs_tsne4M8_TIC, method = "euclidean")
+hclust_tsne4M8_TIC <- fastcluster::hclust(dist_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M8_TIC, k=10))
+
+dist_umap4M8_TIC <- dist(pcs_umap4M8_TIC, method = "euclidean")
+hclust_umap4M8_TIC <- fastcluster::hclust(dist_umap4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M8_TIC, k=10))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M8, "hclust_pca_TIC", 10)
+plot_clusters(pixel_metadata4M8, "hclust_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M8, "hclust_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M8, "hclust_umap_TIC", 10)
+```
+
+## Clustering (k=8)
+
+### K-means
+
+```{r}
+km4M8_TIC <- kmeans(log2intensity4M8_TIC_scaled, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_TIC <- as.factor(km4M8_TIC$cluster)
+
+km_pca4M8_TIC <- kmeans(pcs4M8, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_TIC <- as.factor(km_pca4M8_TIC$cluster)
+
+km_tsne4M8_TIC <- kmeans(pcs_tsne4M8_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_tsne_TIC <- as.factor(km_tsne4M8_TIC$cluster)
+
+km_pca_tsne4M8_TIC <- kmeans(pcs_pca_tsne4M8_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M8_TIC$cluster)
+
+km_umap4M8_TIC <- kmeans(pcs_umap4M8_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_umap_TIC <- as.factor(km_umap4M8_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M8, "kmeans_TIC", 8)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_TIC", 8)
+plot_clusters(pixel_metadata4M8, "kmeans_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M8, "kmeans_umap_TIC", 8)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M8_TIC <- fcmR::fuzzyCmeans(pcs4M8, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_cluster_TIC <- fcm_pca4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_membership_TIC <- fcm_pca4M8_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M8_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_tsne_cluster_TIC <- fcm_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_tsne_membership_TIC <- fcm_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M8_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M8_TIC <- fcmR::fuzzyCmeans(pcs_umap4M8_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_umap_cluster_TIC <- fcm_umap4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_umap_membership_TIC <- fcm_umap4M8_TIC$clustering$membership
+
+plot_fcm(pixel_metadata4M8, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 8)
+plot_fcm(pixel_metadata4M8, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 8)
+plot_fcm(pixel_metadata4M8, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 8)
+plot_fcm(pixel_metadata4M8, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 8)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M8_TIC <- Mclust(pcs4M8, 8)
+pixel_metadata4M8$gmm_pca_TIC <- as.factor(gmm_pca4M8_TIC$classification)
+gmm_pca_tsne4M8_TIC <- Mclust(pcs_pca_tsne4M8_TIC, 8)
+pixel_metadata4M8$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M8_TIC$classification)
+gmm_tsne4M8_TIC <- Mclust(pcs_tsne4M8_TIC, 8)
+pixel_metadata4M8$gmm_tsne_TIC <- as.factor(gmm_tsne4M8_TIC$classification)
+gmm_umap4M8_TIC <- Mclust(pcs_umap4M8_TIC, 8)
+pixel_metadata4M8$gmm_umap_TIC <- as.factor(gmm_umap4M8_TIC$classification)
+
+plot_clusters(pixel_metadata4M8, "gmm_pca_TIC", 8)
+plot_clusters(pixel_metadata4M8, "gmm_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M8, "gmm_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M8, "gmm_umap_TIC", 8)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M8_TIC <- dist(pcs4M8, method = "euclidean")
+hclust_pca4M8_TIC <- fastcluster::hclust(dist_pca4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M8_TIC, k=8))
+
+dist_pca_tsne4M8_TIC <- dist(pcs_pca_tsne4M8_TIC, method = "euclidean")
+hclust_pca_tsne4M8_TIC <- fastcluster::hclust(dist_pca_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M8_TIC, k=8))
+
+dist_tsne4M8_TIC <- dist(pcs_tsne4M8_TIC, method = "euclidean")
+hclust_tsne4M8_TIC <- fastcluster::hclust(dist_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M8_TIC, k=8))
+
+dist_umap4M8_TIC <- dist(pcs_umap4M8_TIC, method = "euclidean")
+hclust_umap4M8_TIC <- fastcluster::hclust(dist_umap4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M8_TIC, k=8))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M8, "hclust_pca_TIC", 8)
+plot_clusters(pixel_metadata4M8, "hclust_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M8, "hclust_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M8, "hclust_umap_TIC", 8)
+```
+
+## Clustering (k=6)
+
+### K-means
+
+```{r}
+km4M8_TIC <- kmeans(log2intensity4M8_TIC_scaled, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_TIC <- as.factor(km4M8_TIC$cluster)
+
+km_pca4M8_TIC <- kmeans(pcs4M8, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_TIC <- as.factor(km_pca4M8_TIC$cluster)
+
+km_tsne4M8_TIC <- kmeans(pcs_tsne4M8_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_tsne_TIC <- as.factor(km_tsne4M8_TIC$cluster)
+
+km_pca_tsne4M8_TIC <- kmeans(pcs_pca_tsne4M8_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M8_TIC$cluster)
+
+km_umap4M8_TIC <- kmeans(pcs_umap4M8_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M8$kmeans_umap_TIC <- as.factor(km_umap4M8_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M8, "kmeans_TIC", 6)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_TIC", 6)
+plot_clusters(pixel_metadata4M8, "kmeans_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M8, "kmeans_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M8, "kmeans_umap_TIC", 6)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M8_TIC <- fcmR::fuzzyCmeans(pcs4M8, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_cluster_TIC <- fcm_pca4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_membership_TIC <- fcm_pca4M8_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M8_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_tsne_cluster_TIC <- fcm_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_tsne_membership_TIC <- fcm_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M8_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M8_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M8_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M8_TIC <- fcmR::fuzzyCmeans(pcs_umap4M8_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M8$fcm_umap_cluster_TIC <- fcm_umap4M8_TIC$clustering$cluster
+pixel_metadata4M8$fcm_umap_membership_TIC <- fcm_umap4M8_TIC$clustering$membership
+
+
+plot_fcm(pixel_metadata4M8, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 6)
+plot_fcm(pixel_metadata4M8, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata4M8, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata4M8, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 6)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M8_TIC <- Mclust(pcs4M8, 6)
+pixel_metadata4M8$gmm_pca_TIC <- as.factor(gmm_pca4M8_TIC$classification)
+gmm_pca_tsne4M8_TIC <- Mclust(pcs_pca_tsne4M8_TIC, 6)
+pixel_metadata4M8$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M8_TIC$classification)
+gmm_tsne4M8_TIC <- Mclust(pcs_tsne4M8_TIC, 6)
+pixel_metadata4M8$gmm_tsne_TIC <- as.factor(gmm_tsne4M8_TIC$classification)
+gmm_umap4M8_TIC <- Mclust(pcs_umap4M8_TIC, 6)
+pixel_metadata4M8$gmm_umap_TIC <- as.factor(gmm_umap4M8_TIC$classification)
+
+plot_clusters(pixel_metadata4M8, "gmm_pca_TIC", 6)
+plot_clusters(pixel_metadata4M8, "gmm_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M8, "gmm_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M8, "gmm_umap_TIC", 6)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M8_TIC <- dist(pcs4M8, method = "euclidean")
+hclust_pca4M8_TIC <- fastcluster::hclust(dist_pca4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M8_TIC, k=6))
+
+dist_pca_tsne4M8_TIC <- dist(pcs_pca_tsne4M8_TIC, method = "euclidean")
+hclust_pca_tsne4M8_TIC <- fastcluster::hclust(dist_pca_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M8_TIC, k=6))
+
+dist_tsne4M8_TIC <- dist(pcs_tsne4M8_TIC, method = "euclidean")
+hclust_tsne4M8_TIC <- fastcluster::hclust(dist_tsne4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M8_TIC, k=6))
+
+dist_umap4M8_TIC <- dist(pcs_umap4M8_TIC, method = "euclidean")
+hclust_umap4M8_TIC <- fastcluster::hclust(dist_umap4M8_TIC, method = "complete")
+pixel_metadata4M8$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M8_TIC, k=6))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M8, "hclust_pca_TIC", 6)
+plot_clusters(pixel_metadata4M8, "hclust_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M8, "hclust_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M8, "hclust_umap_TIC", 6)
+```
+
+Amb una altra mostra:
+
+```{r}
+
+
+# Seleccionem la mostra 4M12
+idx4M12 <- which(pixel_metadata2$sample == "241216_Au_P_MPc_OIO_4M12_x5-proc")
+pks4M12<- pks2[idx4M12,]
+
+# Incloiem els noms de les mostres per a cada píxel 
+sample_name_px4M12 <- rep(pks4M12$names, times = pks4M12$numPixels)
+#i les coordenades espacials
+coords4M12 <- as.data.frame(pks4M12$pos)
+colnames(coords4M12) <- c("x", "y")
+# en un nou data.frame per a la mostra 4M12
+pixel_metadata4M12 <- data.frame(
+  sample    = sample_name_px4M12,
+  x         = coords4M12$x,
+  y         = coords4M12$y)
+
+# m/z amb una major variància:
+var_mz <- apply(pks4M12$intensity, 2, var)
+idx_var <- order(var_mz, decreasing = TRUE)[1]
+#Visualització d'aquest data.frame:
+rMSI2::plotPeakImage(pks4M12, column=idx_var)
+
+```
+\
+## Normalització, transformació i reducció dimensional 
+
+```{r}
+# Normalització de les dades amb TIC
+pks4M12$intensityTIC <- pks4M12$intensity / pks4M12$normalizations$TIC
+```
+
+### PCA
+
+```{r}
+# Transformació logarítmica de la intensitat
+set.seed(111)
+log2intensity4M12_TIC <- log2(pks4M12$intensityTIC+1)
+# Anàlisi de components principals
+pca4M12 <- prcomp(log2intensity4M12_TIC,  center=TRUE, scale=TRUE)
+# Resultats de l'anàlisi
+pca4M12_df <- data.frame(
+  PC1 = pca4M12$x[,1],
+  PC2 = pca4M12$x[,2],
+  sample = pixel_metadata4M12$sample
+)
+
+library(ggplot2)
+# Gràfica amb els 2 primers components principals
+ggplot(pca4M12_df, aes(PC1, PC2)) +
+  geom_point(size = 0.3, alpha = 0.5) +
+  labs(title="PCA") +
+  theme_minimal()
+
+# Càlcul de la var. explicada per cada component
+var_exp4M12 <- pca4M12$sdev^2/sum(pca4M12$sdev^2)
+cumvar4M12 <- cumsum(var_exp4M12)
+
+#Representació gràfica:
+plot(cumvar4M12, type="b", ylab="Var acumulada", xlab="Components", xlim=c(0,2000))
+abline(h=0.80, col="red")
+```
+
+```{r}
+# Reducció de dimensionalitat: se seleccionen els 200 primers components
+pcs4M12 <- pca4M12$x[, 1:200]
+
+```
+
+
+### t-SNE
+
+```{r}
+library(Rtsne)
+# Ajust de l'escala de les dades d'intensitat
+log2intensity4M12_TIC_scaled <-scale(log2intensity4M12_TIC)
+# Reducció dimensional amb t-SNE
+set.seed(111)
+# dels primers components de la PCA
+tsne_pcs4M12_TIC <- Rtsne(pcs4M12, dims = 2, perplexity = 30, check_duplicates = FALSE)
+#de les dades completes
+tsne4M12_TIC <- Rtsne(log2intensity4M12_TIC_scaled, dims=2, perplexity=30, check_duplicates=FALSE)
+# Extraiem els resultats i els afegim a les metadades
+pixel_metadata4M12$tsne1 <- tsne4M12_TIC$Y[,1]
+pixel_metadata4M12$tsne2 <- tsne4M12_TIC$Y[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M12, aes(x = tsne1, y = tsne2)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "t-SNE") +
+  theme_minimal()
+# Extraiem els resultats i els afegim a les metadades
+pixel_metadata4M12$tsne1_pcs <- tsne_pcs4M12_TIC$Y[,1]
+pixel_metadata4M12$tsne2_pcs <- tsne_pcs4M12_TIC$Y[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M12, aes(x = tsne1_pcs, y = tsne2_pcs)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "PCA + t-SNE") +
+  theme_minimal()
+# Desem la reducció
+pcs_tsne4M12_TIC <- tsne4M12_TIC$Y[,1:2]
+pcs_pca_tsne4M12_TIC <- tsne_pcs4M12_TIC$Y[,1:2]
+```
+
+### UMAP
+
+```{r}
+# Reducció de dimensionalitat per UMAP
+library(uwot)
+umap4M12_TIC <- umap(log2intensity4M12_TIC_scaled, n_neighbors = 15, n_components = 2, metric = "euclidean")
+# Desem els resultats en les metadades
+pixel_metadata4M12$umap1 <- umap4M12_TIC[,1]
+pixel_metadata4M12$umap2 <- umap4M12_TIC[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M12, aes(x = umap1, y = umap2)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "UMAP de les mostres") +
+  theme_minimal()
+# Desem la reducció
+pcs_umap4M12_TIC <- umap4M12_TIC[,1:2]
+```
+
+## Clustering (k=4)
+
+```{r}
+# Elbow method (Mètode del colze) per estudiar el nombre òptim de clústers
+set.seed(111)
+k_range <- 2:10
+# Càlcul de la suma de quadrats entre clústers
+wcss4M12_TIC <- sapply(k_range, function(k) {
+  kmeans(pcs4M12, centers = k, nstart = 5, iter.max = 20)$tot.withinss
+})
+
+# Gràfica del colze
+plot(k_range, wcss4M12_TIC, type="b", pch=19, frame=FALSE, 
+     xlab="k",
+     ylab="WCSS",
+     main="Mètode del colze (TIC)")
+```
+\
+
+### K-means
+
+```{r}
+# K-means sobre les dades completes
+km4M12_TIC <- kmeans(log2intensity4M12_TIC_scaled, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_TIC <- as.factor(km4M12_TIC$cluster)
+# K-means sobre les dades reduïdes per PCA
+km_pca4M12_TIC <- kmeans(pcs4M12, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_TIC <- as.factor(km_pca4M12_TIC$cluster)
+# k-means sobre les dades reduïdes per t-SNE
+km_tsne4M12_TIC <- kmeans(pcs_tsne4M12_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_tsne_TIC <- as.factor(km_tsne4M12_TIC$cluster)
+# k-means sobre les dades reduïdes per PCA i t-SNE
+km_pca_tsne4M12_TIC <- kmeans(pcs_pca_tsne4M12_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M12_TIC$cluster)
+# K-means sobre les dades reduïdes per UMAP
+km_umap4M12_TIC <- kmeans(pcs_umap4M12_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_umap_TIC <- as.factor(km_umap4M12_TIC$cluster)
+
+# Representació gràfica
+library(ggplot2)
+plot_clusters(pixel_metadata4M12, "kmeans_TIC", 4)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_TIC", 4)
+plot_clusters(pixel_metadata4M12, "kmeans_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M12, "kmeans_umap_TIC", 4)
+```
+
+\
+### FCM 
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+# FCM sobre les dades reduïdes per PCA
+fcm_pca4M12_TIC <- fcmR::fuzzyCmeans(pcs4M12, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_cluster_TIC <- fcm_pca4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_membership_TIC <- fcm_pca4M12_TIC$clustering$membership
+
+### 
+set.seed(111)
+# FCM sobre les dades reduïdes per t-SNE
+fcm_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M12_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_tsne_cluster_TIC <- fcm_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_tsne_membership_TIC <- fcm_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+# FCM sobre les dades reduïdes per PCA i t-SNE
+fcm_pca_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M12_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+# FCM sobre les dades reduïdes per UMAP
+fcm_umap4M12_TIC <- fcmR::fuzzyCmeans(pcs_umap4M12_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_umap_cluster_TIC <- fcm_umap4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_umap_membership_TIC <- fcm_umap4M12_TIC$clustering$membership
+
+# Representació gràfica:
+
+plot_fcm(pixel_metadata4M12, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 4)
+plot_fcm(pixel_metadata4M12, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC",4)
+plot_fcm(pixel_metadata4M12, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 4)
+plot_fcm(pixel_metadata4M12, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 4)
+```
+\
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+# GMM sobre les dades reduïdes per PCA
+gmm_pca4M12_TIC <- Mclust(pcs4M12, 4)
+pixel_metadata4M12$gmm_pca_TIC <- as.factor(gmm_pca4M12_TIC$classification)
+# GMM sobre les dades reduïdes per PCA i t-SNE
+gmm_pca_tsne4M12_TIC <- Mclust(pcs_pca_tsne4M12_TIC, 4)
+pixel_metadata4M12$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M12_TIC$classification)
+# GMM sobre les dades reduïdes per t-SNE
+gmm_tsne4M12_TIC <- Mclust(pcs_tsne4M12_TIC, 4)
+pixel_metadata4M12$gmm_tsne_TIC <- as.factor(gmm_tsne4M12_TIC$classification)
+# GMM sobre les dades reduïdes per UMAP
+gmm_umap4M12_TIC <- Mclust(pcs_umap4M12_TIC, 4)
+pixel_metadata4M12$gmm_umap_TIC <- as.factor(gmm_umap4M12_TIC$classification)
+
+# Representació gràfica
+plot_clusters(pixel_metadata4M12, "gmm_pca_TIC", 4)
+plot_clusters(pixel_metadata4M12, "gmm_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M12, "gmm_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M12, "gmm_umap_TIC", 4)
+
+```
+\
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+#Amb les dades reduïdes per PCA
+#Distàncies euclidianes
+dist_pca4M12_TIC <- dist(pcs4M12, method = "euclidean")
+#HCLust
+hclust_pca4M12_TIC <- fastcluster::hclust(dist_pca4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M12_TIC, k=4))
+#Amb les dades reduïdes per PCA i t-SNE
+dist_pca_tsne4M12_TIC <- dist(pcs_pca_tsne4M12_TIC, method = "euclidean")
+hclust_pca_tsne4M12_TIC <- fastcluster::hclust(dist_pca_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M12_TIC, k=4))
+#Amb les dades reduïdes per t-SNE
+dist_tsne4M12_TIC <- dist(pcs_tsne4M12_TIC, method = "euclidean")
+hclust_tsne4M12_TIC <- fastcluster::hclust(dist_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M12_TIC, k=4))
+# Amb les dades reduïdes per UMAP
+dist_umap4M12_TIC <- dist(pcs_umap4M12_TIC, method = "euclidean")
+hclust_umap4M12_TIC <- fastcluster::hclust(dist_umap4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M12_TIC, k=4))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M12, "hclust_pca_TIC", 4)
+plot_clusters(pixel_metadata4M12, "hclust_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M12, "hclust_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M12, "hclust_umap_TIC", 4)
+```
+\
+## Clustering (k=10)
+
+### K-means
+
+```{r}
+km4M12_TIC <- kmeans(log2intensity4M12_TIC_scaled, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_TIC <- as.factor(km4M12_TIC$cluster)
+
+km_pca4M12_TIC <- kmeans(pcs4M12, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_TIC <- as.factor(km_pca4M12_TIC$cluster)
+
+km_tsne4M12_TIC <- kmeans(pcs_tsne4M12_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_tsne_TIC <- as.factor(km_tsne4M12_TIC$cluster)
+
+km_pca_tsne4M12_TIC <- kmeans(pcs_pca_tsne4M12_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M12_TIC$cluster)
+
+km_umap4M12_TIC <- kmeans(pcs_umap4M12_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_umap_TIC <- as.factor(km_umap4M12_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M12, "kmeans_TIC", 10)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_TIC", 10)
+plot_clusters(pixel_metadata4M12, "kmeans_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M12, "kmeans_umap_TIC", 10)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M12_TIC <- fcmR::fuzzyCmeans(pcs4M12, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_cluster_TIC <- fcm_pca4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_membership_TIC <- fcm_pca4M12_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M12_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_tsne_cluster_TIC <- fcm_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_tsne_membership_TIC <- fcm_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M12_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M12_TIC <- fcmR::fuzzyCmeans(pcs_umap4M12_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_umap_cluster_TIC <- fcm_umap4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_umap_membership_TIC <- fcm_umap4M12_TIC$clustering$membership
+
+
+plot_fcm(pixel_metadata4M12, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 10)
+plot_fcm(pixel_metadata4M12, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata4M12, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata4M12, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 10)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M12_TIC <- Mclust(pcs4M12, 10)
+pixel_metadata4M12$gmm_pca_TIC <- as.factor(gmm_pca4M12_TIC$classification)
+gmm_pca_tsne4M12_TIC <- Mclust(pcs_pca_tsne4M12_TIC, 10)
+pixel_metadata4M12$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M12_TIC$classification)
+gmm_tsne4M12_TIC <- Mclust(pcs_tsne4M12_TIC, 10)
+pixel_metadata4M12$gmm_tsne_TIC <- as.factor(gmm_tsne4M12_TIC$classification)
+gmm_umap4M12_TIC <- Mclust(pcs_umap4M12_TIC, 10)
+pixel_metadata4M12$gmm_umap_TIC <- as.factor(gmm_umap4M12_TIC$classification)
+
+plot_clusters(pixel_metadata4M12, "gmm_pca_TIC", 10)
+plot_clusters(pixel_metadata4M12, "gmm_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M12, "gmm_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M12, "gmm_umap_TIC", 10)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M12_TIC <- dist(pcs4M12, method = "euclidean")
+hclust_pca4M12_TIC <- fastcluster::hclust(dist_pca4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M12_TIC, k=10))
+
+dist_pca_tsne4M12_TIC <- dist(pcs_pca_tsne4M12_TIC, method = "euclidean")
+hclust_pca_tsne4M12_TIC <- fastcluster::hclust(dist_pca_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M12_TIC, k=10))
+
+dist_tsne4M12_TIC <- dist(pcs_tsne4M12_TIC, method = "euclidean")
+hclust_tsne4M12_TIC <- fastcluster::hclust(dist_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M12_TIC, k=10))
+
+dist_umap4M12_TIC <- dist(pcs_umap4M12_TIC, method = "euclidean")
+hclust_umap4M12_TIC <- fastcluster::hclust(dist_umap4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M12_TIC, k=10))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M12, "hclust_pca_TIC", 10)
+plot_clusters(pixel_metadata4M12, "hclust_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M12, "hclust_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M12, "hclust_umap_TIC", 10)
+```
+
+## Clustering (k=8)
+
+### K-means
+
+```{r}
+km4M12_TIC <- kmeans(log2intensity4M12_TIC_scaled, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_TIC <- as.factor(km4M12_TIC$cluster)
+
+km_pca4M12_TIC <- kmeans(pcs4M12, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_TIC <- as.factor(km_pca4M12_TIC$cluster)
+
+km_tsne4M12_TIC <- kmeans(pcs_tsne4M12_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_tsne_TIC <- as.factor(km_tsne4M12_TIC$cluster)
+
+km_pca_tsne4M12_TIC <- kmeans(pcs_pca_tsne4M12_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M12_TIC$cluster)
+
+km_umap4M12_TIC <- kmeans(pcs_umap4M12_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_umap_TIC <- as.factor(km_umap4M12_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M12, "kmeans_TIC", 8)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_TIC", 8)
+plot_clusters(pixel_metadata4M12, "kmeans_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M12, "kmeans_umap_TIC", 8)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M12_TIC <- fcmR::fuzzyCmeans(pcs4M12, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_cluster_TIC <- fcm_pca4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_membership_TIC <- fcm_pca4M12_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M12_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_tsne_cluster_TIC <- fcm_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_tsne_membership_TIC <- fcm_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M12_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M12_TIC <- fcmR::fuzzyCmeans(pcs_umap4M12_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_umap_cluster_TIC <- fcm_umap4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_umap_membership_TIC <- fcm_umap4M12_TIC$clustering$membership
+
+
+plot_fcm(pixel_metadata4M12, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 8)
+plot_fcm(pixel_metadata4M12, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 8)
+plot_fcm(pixel_metadata4M12, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 8)
+plot_fcm(pixel_metadata4M12, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 8)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M12_TIC <- Mclust(pcs4M12, 8)
+pixel_metadata4M12$gmm_pca_TIC <- as.factor(gmm_pca4M12_TIC$classification)
+gmm_pca_tsne4M12_TIC <- Mclust(pcs_pca_tsne4M12_TIC, 8)
+pixel_metadata4M12$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M12_TIC$classification)
+gmm_tsne4M12_TIC <- Mclust(pcs_tsne4M12_TIC, 8)
+pixel_metadata4M12$gmm_tsne_TIC <- as.factor(gmm_tsne4M12_TIC$classification)
+gmm_umap4M12_TIC <- Mclust(pcs_umap4M12_TIC, 8)
+pixel_metadata4M12$gmm_umap_TIC <- as.factor(gmm_umap4M12_TIC$classification)
+
+plot_clusters(pixel_metadata4M12, "gmm_pca_TIC", 8)
+plot_clusters(pixel_metadata4M12, "gmm_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M12, "gmm_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M12, "gmm_umap_TIC", 8)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M12_TIC <- dist(pcs4M12, method = "euclidean")
+hclust_pca4M12_TIC <- fastcluster::hclust(dist_pca4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M12_TIC, k=8))
+
+dist_pca_tsne4M12_TIC <- dist(pcs_pca_tsne4M12_TIC, method = "euclidean")
+hclust_pca_tsne4M12_TIC <- fastcluster::hclust(dist_pca_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M12_TIC, k=8))
+
+dist_tsne4M12_TIC <- dist(pcs_tsne4M12_TIC, method = "euclidean")
+hclust_tsne4M12_TIC <- fastcluster::hclust(dist_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M12_TIC, k=8))
+
+dist_umap4M12_TIC <- dist(pcs_umap4M12_TIC, method = "euclidean")
+hclust_umap4M12_TIC <- fastcluster::hclust(dist_umap4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M12_TIC, k=8))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M12, "hclust_pca_TIC", 8)
+plot_clusters(pixel_metadata4M12, "hclust_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M12, "hclust_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M12, "hclust_umap_TIC", 8)
+```
+
+## Clustering (k=6)
+
+### K-means
+
+```{r}
+km4M12_TIC <- kmeans(log2intensity4M12_TIC_scaled, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_TIC <- as.factor(km4M12_TIC$cluster)
+
+km_pca4M12_TIC <- kmeans(pcs4M12, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_TIC <- as.factor(km_pca4M12_TIC$cluster)
+
+km_tsne4M12_TIC <- kmeans(pcs_tsne4M12_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_tsne_TIC <- as.factor(km_tsne4M12_TIC$cluster)
+
+km_pca_tsne4M12_TIC <- kmeans(pcs_pca_tsne4M12_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M12_TIC$cluster)
+
+km_umap4M12_TIC <- kmeans(pcs_umap4M12_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M12$kmeans_umap_TIC <- as.factor(km_umap4M12_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M12, "kmeans_TIC", 6)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_TIC", 6)
+plot_clusters(pixel_metadata4M12, "kmeans_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M12, "kmeans_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M12, "kmeans_umap_TIC", 6)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M12_TIC <- fcmR::fuzzyCmeans(pcs4M12, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_cluster_TIC <- fcm_pca4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_membership_TIC <- fcm_pca4M12_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M12_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_tsne_cluster_TIC <- fcm_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_tsne_membership_TIC <- fcm_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M12_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M12_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M12_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M12_TIC <- fcmR::fuzzyCmeans(pcs_umap4M12_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M12$fcm_umap_cluster_TIC <- fcm_umap4M12_TIC$clustering$cluster
+pixel_metadata4M12$fcm_umap_membership_TIC <- fcm_umap4M12_TIC$clustering$membership
+
+
+plot_fcm(pixel_metadata4M12, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 6)
+plot_fcm(pixel_metadata4M12, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata4M12, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata4M12, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 6)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M12_TIC <- Mclust(pcs4M12, 6)
+pixel_metadata4M12$gmm_pca_TIC <- as.factor(gmm_pca4M12_TIC$classification)
+gmm_pca_tsne4M12_TIC <- Mclust(pcs_pca_tsne4M12_TIC, 6)
+pixel_metadata4M12$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M12_TIC$classification)
+gmm_tsne4M12_TIC <- Mclust(pcs_tsne4M12_TIC, 6)
+pixel_metadata4M12$gmm_tsne_TIC <- as.factor(gmm_tsne4M12_TIC$classification)
+gmm_umap4M12_TIC <- Mclust(pcs_umap4M12_TIC, 6)
+pixel_metadata4M12$gmm_umap_TIC <- as.factor(gmm_umap4M12_TIC$classification)
+
+plot_clusters(pixel_metadata4M12, "gmm_pca_TIC", 6)
+plot_clusters(pixel_metadata4M12, "gmm_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M12, "gmm_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M12, "gmm_umap_TIC", 6)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M12_TIC <- dist(pcs4M12, method = "euclidean")
+hclust_pca4M12_TIC <- fastcluster::hclust(dist_pca4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M12_TIC, k=6))
+
+dist_pca_tsne4M12_TIC <- dist(pcs_pca_tsne4M12_TIC, method = "euclidean")
+hclust_pca_tsne4M12_TIC <- fastcluster::hclust(dist_pca_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M12_TIC, k=6))
+
+dist_tsne4M12_TIC <- dist(pcs_tsne4M12_TIC, method = "euclidean")
+hclust_tsne4M12_TIC <- fastcluster::hclust(dist_tsne4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M12_TIC, k=6))
+
+dist_umap4M12_TIC <- dist(pcs_umap4M12_TIC, method = "euclidean")
+hclust_umap4M12_TIC <- fastcluster::hclust(dist_umap4M12_TIC, method = "complete")
+pixel_metadata4M12$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M12_TIC, k=6))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M12, "hclust_pca_TIC", 6)
+plot_clusters(pixel_metadata4M12, "hclust_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M12, "hclust_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M12, "hclust_umap_TIC", 6)
+```
+
+--------
+
+```{r}
+
+
+# Seleccionem la mostra 4M9
+idx4M9 <- which(pixel_metadata2$sample == "250115_Au_P_MPc_OIO_4M9_x5-proc")
+pks4M9<- pks2[idx4M9,]
+
+# Incloiem els noms de les mostres per a cada píxel 
+sample_name_px4M9 <- rep(pks4M9$names, times = pks4M9$numPixels)
+#i les coordenades espacials
+coords4M9 <- as.data.frame(pks4M9$pos)
+colnames(coords4M9) <- c("x", "y")
+# en un nou data.frame per a la mostra 4M9
+pixel_metadata4M9 <- data.frame(
+  sample    = sample_name_px4M9,
+  x         = coords4M9$x,
+  y         = coords4M9$y)
+
+# m/z amb una major variància:
+var_mz <- apply(pks4M9$intensity, 2, var)
+idx_var <- order(var_mz, decreasing = TRUE)[1]
+#Visualització d'aquest data.frame:
+rMSI2::plotPeakImage(pks4M9, column=idx_var)
+
+```
+\
+## Normalització, transformació i reducció dimensional 
+
+```{r}
+# Normalització de les dades amb TIC
+pks4M9$intensityTIC <- pks4M9$intensity / pks4M9$normalizations$TIC
+```
+
+### PCA
+
+```{r}
+# Transformació logarítmica de la intensitat
+set.seed(111)
+log2intensity4M9_TIC <- log2(pks4M9$intensityTIC+1)
+# Anàlisi de components principals
+pca4M9 <- prcomp(log2intensity4M9_TIC,  center=TRUE, scale=TRUE)
+# Resultats de l'anàlisi
+pca4M9_df <- data.frame(
+  PC1 = pca4M9$x[,1],
+  PC2 = pca4M9$x[,2],
+  sample = pixel_metadata4M9$sample
+)
+
+library(ggplot2)
+# Gràfica amb els 2 primers components principals
+ggplot(pca4M9_df, aes(PC1, PC2)) +
+  geom_point(size = 0.3, alpha = 0.5) +
+  labs(title="PCA") +
+  theme_minimal()
+
+# Càlcul de la var. explicada per cada component
+var_exp4M9 <- pca4M9$sdev^2/sum(pca4M9$sdev^2)
+cumvar4M9 <- cumsum(var_exp4M9)
+
+#Representació gràfica:
+plot(cumvar4M9, type="b", ylab="Var acumulada", xlab="Components", xlim=c(0,2000))
+abline(h=0.80, col="red")
+```
+
+```{r}
+# Reducció de dimensionalitat: se seleccionen els 200 primers components
+pcs4M9 <- pca4M9$x[, 1:200]
+
+```
+
+
+### t-SNE
+
+```{r}
+library(Rtsne)
+# Ajust de l'escala de les dades d'intensitat
+log2intensity4M9_TIC_scaled <-scale(log2intensity4M9_TIC)
+# Reducció dimensional amb t-SNE
+set.seed(111)
+# dels primers components de la PCA
+tsne_pcs4M9_TIC <- Rtsne(pcs4M9, dims = 2, perplexity = 30, check_duplicates = FALSE)
+#de les dades completes
+tsne4M9_TIC <- Rtsne(log2intensity4M9_TIC_scaled, dims=2, perplexity=30, check_duplicates=FALSE)
+# Extraiem els resultats i els afegim a les metadades
+pixel_metadata4M9$tsne1 <- tsne4M9_TIC$Y[,1]
+pixel_metadata4M9$tsne2 <- tsne4M9_TIC$Y[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M9, aes(x = tsne1, y = tsne2)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "t-SNE") +
+  theme_minimal()
+# Extraiem els resultats i els afegim a les metadades
+pixel_metadata4M9$tsne1_pcs <- tsne_pcs4M9_TIC$Y[,1]
+pixel_metadata4M9$tsne2_pcs <- tsne_pcs4M9_TIC$Y[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M9, aes(x = tsne1_pcs, y = tsne2_pcs)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "PCA + t-SNE") +
+  theme_minimal()
+# Desem la reducció
+pcs_tsne4M9_TIC <- tsne4M9_TIC$Y[,1:2]
+pcs_pca_tsne4M9_TIC <- tsne_pcs4M9_TIC$Y[,1:2]
+```
+
+### UMAP
+
+```{r}
+# Reducció de dimensionalitat per UMAP
+library(uwot)
+umap4M9_TIC <- umap(log2intensity4M9_TIC_scaled, n_neighbors = 15, n_components = 2, metric = "euclidean")
+# Desem els resultats en les metadades
+pixel_metadata4M9$umap1 <- umap4M9_TIC[,1]
+pixel_metadata4M9$umap2 <- umap4M9_TIC[,2]
+# Representació gràfica
+ggplot(pixel_metadata4M9, aes(x = umap1, y = umap2)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "UMAP de les mostres") +
+  theme_minimal()
+# Desem la reducció
+pcs_umap4M9_TIC <- umap4M9_TIC[,1:2]
+```
+
+## Clustering (k=4)
+
+```{r}
+# Elbow method (Mètode del colze) per estudiar el nombre òptim de clústers
+set.seed(111)
+k_range <- 2:10
+# Càlcul de la suma de quadrats entre clústers
+wcss4M9_TIC <- sapply(k_range, function(k) {
+  kmeans(pcs4M9, centers = k, nstart = 5, iter.max = 20)$tot.withinss
+})
+
+# Gràfica del colze
+plot(k_range, wcss4M9_TIC, type="b", pch=19, frame=FALSE, 
+     xlab="k",
+     ylab="WCSS",
+     main="Mètode del colze (TIC)")
+```
+\
+
+### K-means
+
+```{r}
+# K-means sobre les dades completes
+km4M9_TIC <- kmeans(log2intensity4M9_TIC_scaled, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_TIC <- as.factor(km4M9_TIC$cluster)
+# K-means sobre les dades reduïdes per PCA
+km_pca4M9_TIC <- kmeans(pcs4M9, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_TIC <- as.factor(km_pca4M9_TIC$cluster)
+# k-means sobre les dades reduïdes per t-SNE
+km_tsne4M9_TIC <- kmeans(pcs_tsne4M9_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_tsne_TIC <- as.factor(km_tsne4M9_TIC$cluster)
+# k-means sobre les dades reduïdes per PCA i t-SNE
+km_pca_tsne4M9_TIC <- kmeans(pcs_pca_tsne4M9_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M9_TIC$cluster)
+# K-means sobre les dades reduïdes per UMAP
+km_umap4M9_TIC <- kmeans(pcs_umap4M9_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_umap_TIC <- as.factor(km_umap4M9_TIC$cluster)
+
+# Representació gràfica
+library(ggplot2)
+plot_clusters(pixel_metadata4M9, "kmeans_TIC", 4)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_TIC", 4)
+plot_clusters(pixel_metadata4M9, "kmeans_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M9, "kmeans_umap_TIC", 4)
+```
+
+\
+### FCM 
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+# FCM sobre les dades reduïdes per PCA
+fcm_pca4M9_TIC <- fcmR::fuzzyCmeans(pcs4M9, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_cluster_TIC <- fcm_pca4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_membership_TIC <- fcm_pca4M9_TIC$clustering$membership
+
+### 
+set.seed(111)
+# FCM sobre les dades reduïdes per t-SNE
+fcm_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M9_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_tsne_cluster_TIC <- fcm_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_tsne_membership_TIC <- fcm_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+# FCM sobre les dades reduïdes per PCA i t-SNE
+fcm_pca_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M9_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+# FCM sobre les dades reduïdes per UMAP
+fcm_umap4M9_TIC <- fcmR::fuzzyCmeans(pcs_umap4M9_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_umap_cluster_TIC <- fcm_umap4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_umap_membership_TIC <- fcm_umap4M9_TIC$clustering$membership
+
+# Representació gràfica:
+
+plot_fcm(pixel_metadata4M9, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 4)
+plot_fcm(pixel_metadata4M9, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC",4)
+plot_fcm(pixel_metadata4M9, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 4)
+plot_fcm(pixel_metadata4M9, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 4)
+```
+\
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+# GMM sobre les dades reduïdes per PCA
+gmm_pca4M9_TIC <- Mclust(pcs4M9, 4)
+pixel_metadata4M9$gmm_pca_TIC <- as.factor(gmm_pca4M9_TIC$classification)
+# GMM sobre les dades reduïdes per PCA i t-SNE
+gmm_pca_tsne4M9_TIC <- Mclust(pcs_pca_tsne4M9_TIC, 4)
+pixel_metadata4M9$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M9_TIC$classification)
+# GMM sobre les dades reduïdes per t-SNE
+gmm_tsne4M9_TIC <- Mclust(pcs_tsne4M9_TIC, 4)
+pixel_metadata4M9$gmm_tsne_TIC <- as.factor(gmm_tsne4M9_TIC$classification)
+# GMM sobre les dades reduïdes per UMAP
+gmm_umap4M9_TIC <- Mclust(pcs_umap4M9_TIC, 4)
+pixel_metadata4M9$gmm_umap_TIC <- as.factor(gmm_umap4M9_TIC$classification)
+
+# Representació gràfica
+plot_clusters(pixel_metadata4M9, "gmm_pca_TIC", 4)
+plot_clusters(pixel_metadata4M9, "gmm_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M9, "gmm_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M9, "gmm_umap_TIC", 4)
+
+```
+\
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+#Amb les dades reduïdes per PCA
+#Distàncies euclidianes
+dist_pca4M9_TIC <- dist(pcs4M9, method = "euclidean")
+#HCLust
+hclust_pca4M9_TIC <- fastcluster::hclust(dist_pca4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M9_TIC, k=4))
+#Amb les dades reduïdes per PCA i t-SNE
+dist_pca_tsne4M9_TIC <- dist(pcs_pca_tsne4M9_TIC, method = "euclidean")
+hclust_pca_tsne4M9_TIC <- fastcluster::hclust(dist_pca_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M9_TIC, k=4))
+#Amb les dades reduïdes per t-SNE
+dist_tsne4M9_TIC <- dist(pcs_tsne4M9_TIC, method = "euclidean")
+hclust_tsne4M9_TIC <- fastcluster::hclust(dist_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M9_TIC, k=4))
+# Amb les dades reduïdes per UMAP
+dist_umap4M9_TIC <- dist(pcs_umap4M9_TIC, method = "euclidean")
+hclust_umap4M9_TIC <- fastcluster::hclust(dist_umap4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M9_TIC, k=4))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M9, "hclust_pca_TIC", 4)
+plot_clusters(pixel_metadata4M9, "hclust_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M9, "hclust_tsne_TIC", 4)
+plot_clusters(pixel_metadata4M9, "hclust_umap_TIC", 4)
+```
+\
+## Clustering (k=10)
+
+### K-means
+
+```{r}
+km4M9_TIC <- kmeans(log2intensity4M9_TIC_scaled, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_TIC <- as.factor(km4M9_TIC$cluster)
+
+km_pca4M9_TIC <- kmeans(pcs4M9, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_TIC <- as.factor(km_pca4M9_TIC$cluster)
+
+km_tsne4M9_TIC <- kmeans(pcs_tsne4M9_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_tsne_TIC <- as.factor(km_tsne4M9_TIC$cluster)
+
+km_pca_tsne4M9_TIC <- kmeans(pcs_pca_tsne4M9_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M9_TIC$cluster)
+
+km_umap4M9_TIC <- kmeans(pcs_umap4M9_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_umap_TIC <- as.factor(km_umap4M9_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M9, "kmeans_TIC", 10)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_TIC", 10)
+plot_clusters(pixel_metadata4M9, "kmeans_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M9, "kmeans_umap_TIC", 10)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M9_TIC <- fcmR::fuzzyCmeans(pcs4M9, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_cluster_TIC <- fcm_pca4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_membership_TIC <- fcm_pca4M9_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M9_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_tsne_cluster_TIC <- fcm_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_tsne_membership_TIC <- fcm_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M9_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M9_TIC <- fcmR::fuzzyCmeans(pcs_umap4M9_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_umap_cluster_TIC <- fcm_umap4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_umap_membership_TIC <- fcm_umap4M9_TIC$clustering$membership
+
+
+plot_fcm(pixel_metadata4M9, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 10)
+plot_fcm(pixel_metadata4M9, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata4M9, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata4M9, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 10)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M9_TIC <- Mclust(pcs4M9, 10)
+pixel_metadata4M9$gmm_pca_TIC <- as.factor(gmm_pca4M9_TIC$classification)
+gmm_pca_tsne4M9_TIC <- Mclust(pcs_pca_tsne4M9_TIC, 10)
+pixel_metadata4M9$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M9_TIC$classification)
+gmm_tsne4M9_TIC <- Mclust(pcs_tsne4M9_TIC, 10)
+pixel_metadata4M9$gmm_tsne_TIC <- as.factor(gmm_tsne4M9_TIC$classification)
+gmm_umap4M9_TIC <- Mclust(pcs_umap4M9_TIC, 10)
+pixel_metadata4M9$gmm_umap_TIC <- as.factor(gmm_umap4M9_TIC$classification)
+
+plot_clusters(pixel_metadata4M9, "gmm_pca_TIC", 10)
+plot_clusters(pixel_metadata4M9, "gmm_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M9, "gmm_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M9, "gmm_umap_TIC", 10)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M9_TIC <- dist(pcs4M9, method = "euclidean")
+hclust_pca4M9_TIC <- fastcluster::hclust(dist_pca4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M9_TIC, k=10))
+
+dist_pca_tsne4M9_TIC <- dist(pcs_pca_tsne4M9_TIC, method = "euclidean")
+hclust_pca_tsne4M9_TIC <- fastcluster::hclust(dist_pca_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M9_TIC, k=10))
+
+dist_tsne4M9_TIC <- dist(pcs_tsne4M9_TIC, method = "euclidean")
+hclust_tsne4M9_TIC <- fastcluster::hclust(dist_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M9_TIC, k=10))
+
+dist_umap4M9_TIC <- dist(pcs_umap4M9_TIC, method = "euclidean")
+hclust_umap4M9_TIC <- fastcluster::hclust(dist_umap4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M9_TIC, k=10))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M9, "hclust_pca_TIC", 10)
+plot_clusters(pixel_metadata4M9, "hclust_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M9, "hclust_tsne_TIC", 10)
+plot_clusters(pixel_metadata4M9, "hclust_umap_TIC", 10)
+```
+
+## Clustering (k=8)
+
+### K-means
+
+```{r}
+km4M9_TIC <- kmeans(log2intensity4M9_TIC_scaled, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_TIC <- as.factor(km4M9_TIC$cluster)
+
+km_pca4M9_TIC <- kmeans(pcs4M9, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_TIC <- as.factor(km_pca4M9_TIC$cluster)
+
+km_tsne4M9_TIC <- kmeans(pcs_tsne4M9_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_tsne_TIC <- as.factor(km_tsne4M9_TIC$cluster)
+
+km_pca_tsne4M9_TIC <- kmeans(pcs_pca_tsne4M9_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M9_TIC$cluster)
+
+km_umap4M9_TIC <- kmeans(pcs_umap4M9_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_umap_TIC <- as.factor(km_umap4M9_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M9, "kmeans_TIC", 8)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_TIC", 8)
+plot_clusters(pixel_metadata4M9, "kmeans_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M9, "kmeans_umap_TIC", 8)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M9_TIC <- fcmR::fuzzyCmeans(pcs4M9, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_cluster_TIC <- fcm_pca4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_membership_TIC <- fcm_pca4M9_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M9_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_tsne_cluster_TIC <- fcm_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_tsne_membership_TIC <- fcm_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M9_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M9_TIC <- fcmR::fuzzyCmeans(pcs_umap4M9_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_umap_cluster_TIC <- fcm_umap4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_umap_membership_TIC <- fcm_umap4M9_TIC$clustering$membership
+
+
+plot_fcm(pixel_metadata4M9, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 8)
+plot_fcm(pixel_metadata4M9, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 8)
+plot_fcm(pixel_metadata4M9, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 8)
+plot_fcm(pixel_metadata4M9, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 8)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M9_TIC <- Mclust(pcs4M9, 8)
+pixel_metadata4M9$gmm_pca_TIC <- as.factor(gmm_pca4M9_TIC$classification)
+gmm_pca_tsne4M9_TIC <- Mclust(pcs_pca_tsne4M9_TIC, 8)
+pixel_metadata4M9$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M9_TIC$classification)
+gmm_tsne4M9_TIC <- Mclust(pcs_tsne4M9_TIC, 8)
+pixel_metadata4M9$gmm_tsne_TIC <- as.factor(gmm_tsne4M9_TIC$classification)
+gmm_umap4M9_TIC <- Mclust(pcs_umap4M9_TIC, 8)
+pixel_metadata4M9$gmm_umap_TIC <- as.factor(gmm_umap4M9_TIC$classification)
+
+plot_clusters(pixel_metadata4M9, "gmm_pca_TIC", 8)
+plot_clusters(pixel_metadata4M9, "gmm_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M9, "gmm_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M9, "gmm_umap_TIC", 8)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M9_TIC <- dist(pcs4M9, method = "euclidean")
+hclust_pca4M9_TIC <- fastcluster::hclust(dist_pca4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M9_TIC, k=8))
+
+dist_pca_tsne4M9_TIC <- dist(pcs_pca_tsne4M9_TIC, method = "euclidean")
+hclust_pca_tsne4M9_TIC <- fastcluster::hclust(dist_pca_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M9_TIC, k=8))
+
+dist_tsne4M9_TIC <- dist(pcs_tsne4M9_TIC, method = "euclidean")
+hclust_tsne4M9_TIC <- fastcluster::hclust(dist_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M9_TIC, k=8))
+
+dist_umap4M9_TIC <- dist(pcs_umap4M9_TIC, method = "euclidean")
+hclust_umap4M9_TIC <- fastcluster::hclust(dist_umap4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M9_TIC, k=8))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M9, "hclust_pca_TIC", 8)
+plot_clusters(pixel_metadata4M9, "hclust_pca_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M9, "hclust_tsne_TIC", 8)
+plot_clusters(pixel_metadata4M9, "hclust_umap_TIC", 8)
+```
+
+## Clustering (k=6)
+
+### K-means
+
+```{r}
+km4M9_TIC <- kmeans(log2intensity4M9_TIC_scaled, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_TIC <- as.factor(km4M9_TIC$cluster)
+
+km_pca4M9_TIC <- kmeans(pcs4M9, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_TIC <- as.factor(km_pca4M9_TIC$cluster)
+
+km_tsne4M9_TIC <- kmeans(pcs_tsne4M9_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_tsne_TIC <- as.factor(km_tsne4M9_TIC$cluster)
+
+km_pca_tsne4M9_TIC <- kmeans(pcs_pca_tsne4M9_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne4M9_TIC$cluster)
+
+km_umap4M9_TIC <- kmeans(pcs_umap4M9_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata4M9$kmeans_umap_TIC <- as.factor(km_umap4M9_TIC$cluster)
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata4M9, "kmeans_TIC", 6)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_TIC", 6)
+plot_clusters(pixel_metadata4M9, "kmeans_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M9, "kmeans_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M9, "kmeans_umap_TIC", 6)
+```
+\
+
+### FCM
+
+```{r}
+
+library(fcmR)
+set.seed(111)
+fcm_pca4M9_TIC <- fcmR::fuzzyCmeans(pcs4M9, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_cluster_TIC <- fcm_pca4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_membership_TIC <- fcm_pca4M9_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_tsne4M9_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_tsne_cluster_TIC <- fcm_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_tsne_membership_TIC <- fcm_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne4M9_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne4M9_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne4M9_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap4M9_TIC <- fcmR::fuzzyCmeans(pcs_umap4M9_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+
+pixel_metadata4M9$fcm_umap_cluster_TIC <- fcm_umap4M9_TIC$clustering$cluster
+pixel_metadata4M9$fcm_umap_membership_TIC <- fcm_umap4M9_TIC$clustering$membership
+
+
+plot_fcm(pixel_metadata4M9, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 6)
+plot_fcm(pixel_metadata4M9, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata4M9, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata4M9, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 6)
+```
+\
+
+### GMM
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca4M9_TIC <- Mclust(pcs4M9, 6)
+pixel_metadata4M9$gmm_pca_TIC <- as.factor(gmm_pca4M9_TIC$classification)
+gmm_pca_tsne4M9_TIC <- Mclust(pcs_pca_tsne4M9_TIC, 6)
+pixel_metadata4M9$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne4M9_TIC$classification)
+gmm_tsne4M9_TIC <- Mclust(pcs_tsne4M9_TIC, 6)
+pixel_metadata4M9$gmm_tsne_TIC <- as.factor(gmm_tsne4M9_TIC$classification)
+gmm_umap4M9_TIC <- Mclust(pcs_umap4M9_TIC, 6)
+pixel_metadata4M9$gmm_umap_TIC <- as.factor(gmm_umap4M9_TIC$classification)
+
+plot_clusters(pixel_metadata4M9, "gmm_pca_TIC", 6)
+plot_clusters(pixel_metadata4M9, "gmm_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M9, "gmm_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M9, "gmm_umap_TIC", 6)
+
+```
+\
+
+### HClust
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca4M9_TIC <- dist(pcs4M9, method = "euclidean")
+hclust_pca4M9_TIC <- fastcluster::hclust(dist_pca4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca4M9_TIC, k=6))
+
+dist_pca_tsne4M9_TIC <- dist(pcs_pca_tsne4M9_TIC, method = "euclidean")
+hclust_pca_tsne4M9_TIC <- fastcluster::hclust(dist_pca_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne4M9_TIC, k=6))
+
+dist_tsne4M9_TIC <- dist(pcs_tsne4M9_TIC, method = "euclidean")
+hclust_tsne4M9_TIC <- fastcluster::hclust(dist_tsne4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne4M9_TIC, k=6))
+
+dist_umap4M9_TIC <- dist(pcs_umap4M9_TIC, method = "euclidean")
+hclust_umap4M9_TIC <- fastcluster::hclust(dist_umap4M9_TIC, method = "complete")
+pixel_metadata4M9$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap4M9_TIC, k=6))
+
+```
+```{r}
+plot_clusters(pixel_metadata4M9, "hclust_pca_TIC", 6)
+plot_clusters(pixel_metadata4M9, "hclust_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M9, "hclust_tsne_TIC", 6)
+plot_clusters(pixel_metadata4M9, "hclust_umap_TIC", 6)
+```

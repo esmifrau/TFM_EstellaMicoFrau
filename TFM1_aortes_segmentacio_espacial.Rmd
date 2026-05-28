@@ -1,0 +1,1331 @@
+---
+title: "TFM"
+author: "Estel·la Micó Frau"
+date: "2026-04-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(comment = NULL, cache = FALSE, cache.lazy = FALSE, message= FALSE, warning = FALSE)
+```
+
+```{r}
+library(devtools)
+# Per instal·lar: devtools::install_github("https://github.com/prafols/rMSI2")
+library(rMSI2)
+# Carreguem el fitxer .pkmat (ha d'estar al directori de treball)
+pks <- rMSI2::LoadPeakMatrix("mergeddata-peaks.pkmat")
+```
+```{r}
+# Resum de les dades:
+summary(pks)
+```
+```{r}
+# Canvi del nom del fitxer per ID
+# Example: "20200714_END19_56150133 002.imzML_sub" → "19"
+pks$id <- sub(".*END([0-9]+).*", "\\1", pks$names)
+```
+
+```{r}
+# Afegim informació sobre el grup al qual pertanyen les mostres: DM (diabetis) i CT (control):
+dm_id <- c("1","2","4","9","17","40","41","44","52","53")
+pks$diagnosis <- ifelse(pks$id %in% dm_id, "DM", "CT")
+```
+```{r}
+# m/z amb una major variància:
+var_mz <- apply(pks$intensity, 2, var)
+idx_var <- order(var_mz, decreasing = TRUE)[1]
+mz_vmax <- pks$mass[idx_var]
+mz_vmax
+# representació gràfica:
+rMSI2::plotPeakImage(pks, column=idx_var, labels=paste(pks$id, pks$diagnosis), nrow=5, ncol=5)
+```
+```{r}
+# Normalització de la intensitat utilitzant els factors de normalització TIC i RMS:
+pks$intensityRMS <- pks$intensity / pks$normalizations$RMS
+pks$intensityTIC <- pks$intensity / pks$normalizations$TIC
+```
+```{r}
+# S'estableix el nom de la mostra a cada pixel,
+sample_name_px <- rep(pks$names, times = pks$numPixels)
+# l'ID de cada mostra per a cada pixel,
+sample_id_px <- rep(pks$id, times = pks$numPixels)
+# el grup a què pertany cada pixel i
+group_px <- rep(pks$diagnosis, times = pks$numPixels)
+#les coordenades de cada pixel:
+coords <- as.data.frame(pks$pos)
+colnames(coords) <- c("x", "y")
+
+# Creem un data frame amb tota la informació dels pixels:
+pixel_metadata <- data.frame(
+  sample    = sample_name_px,
+  sample_id = sample_id_px,
+  group     = group_px,
+  x         = coords$x,
+  y         = coords$y)
+# Definim allò que apareixerà a les etiquetes de les mostres en les gràfiques
+pixel_metadata$facet_label <- paste(
+  pixel_metadata$sample_id,
+  pixel_metadata$group)
+```
+
+```{r}
+library(ggplot2)
+# Sense norm
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = pks$intensity[, idx_var])) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "Intensitat"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+
+# TIC
+
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = pks$intensityTIC[, idx_var])) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "Intensitat(TIC)"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+
+# RMS
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = pks$intensityRMS[, idx_var])) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "Intensitat(RMS)"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+
+```
+
+```{r}
+#par(mfrow = c(1,2))
+#qqnorm(pks$intensityTIC)
+#qqnorm(log2(pks$intensityTIC+1))
+```
+
+
+```{r}
+# Representació de la log2(intensitat+1)
+# Sense norm
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log2(pks$intensity[, idx_var]+1))) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "log2(Intensitat+1)"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+
+# TIC
+
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log2(pks$intensityTIC[, idx_var]+1))) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "log2(Intensitat(TIC)+1)"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+
+# RMS
+
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log2(pks$intensityRMS[, idx_var]+1))) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "log2(Intensitat(RMS)+1)"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+```
+
+## PCA
+```{r}
+#Per fer reproduïble la PCA
+set.seed(111)
+# PCA amb la matriu transformada logarítmicament, per a les intensitats sense normalitzar i normalitzant
+
+#Sense normalització:
+pca <- prcomp(log2(pks$intensity+1),  center=TRUE, scale=TRUE)
+
+# Resultats amb els 3 primers components principals
+pca_df <- data.frame(
+  PC1 = pca$x[,1],
+  PC2 = pca$x[,2],
+  PC3 = pca$x[,3],
+  group = pixel_metadata$group,
+  sample = pixel_metadata$sample
+)
+
+# Gràfica amb els 2 primers components principals
+ggplot(pca_df, aes(PC1, PC2, color = group)) +
+  geom_point(size = 0.3, alpha = 0.5) +
+  labs(title="PCA global - intensitat sense normalitzar") +
+  theme_minimal()
+
+# Càlcul de la var. explicada per cada component
+var_exp <- pca$sdev^2/sum(pca$sdev^2)
+cumvar <- cumsum(var_exp)
+
+#Representació gràfica:
+plot(cumvar, type="b", ylab="Var acumulada", xlab="Components", xlim=c(0,20))
+abline(h=0.80, col="red")
+
+```
+```{r}
+
+# Amb normalització amb TIC
+set.seed(111)
+pca_TIC <- prcomp(log2(pks$intensityTIC+1), center=TRUE, scale=TRUE)
+
+#Data frame dels tres components principals:
+pca_TIC_df <- data.frame(
+  PC1 = pca_TIC$x[,1],
+  PC2 = pca_TIC$x[,2],
+  PC3 = pca_TIC$x[,3],
+  group = pixel_metadata$group,
+  sample = pixel_metadata$sample
+)
+# Gràfica
+ggplot(pca_TIC_df, aes(PC1, PC2, color = group)) +
+  geom_point(size = 0.3, alpha = 0.5) +
+  theme_minimal()
+
+# Càlcul de la var. explicada per cada component
+var_expTIC <- pca_TIC$sdev^2/sum(pca_TIC$sdev^2)
+cumvarTIC <- cumsum(var_expTIC)
+
+
+#Representació gràfica
+plot(cumvarTIC, type="b", ylab="Var acumulada", xlab="Components", xlim=c(0,20))
+abline(h=0.80, col="red")
+
+```
+```{r}
+library(ggplot2)
+# Amb normalització amb RMS
+set.seed(111)
+pca_RMS <- prcomp(log2(pks$intensityRMS+1), center=TRUE, scale=TRUE)
+
+#Data frame dels tres components principals:
+pca_RMS_df <- data.frame(
+  PC1 = pca_RMS$x[,1],
+  PC2 = pca_RMS$x[,2],
+  PC3 = pca_RMS$x[,3],
+  group = pixel_metadata$group,
+  sample = pixel_metadata$sample
+)
+# Gràfica
+ggplot(pca_RMS_df, aes(PC1, PC2, color = group)) +
+  geom_point(size = 0.3, alpha = 0.5) +
+  theme_minimal()
+
+# Càlcul de la var. explicada per cada component
+var_expRMS <- pca_RMS$sdev^2/sum(pca_RMS$sdev^2)
+cumvarRMS <- cumsum(var_expRMS)
+
+#Representació gràfica (llindar del 80% de la var. explicada)
+plot(cumvarRMS, type="b", ylab="Var acumulada", xlab="Components", xlim=c(0,20))
+abline(h=0.80, col="red")
+
+```
+```{r}
+# Reduccio de dimensionalitat
+pcs <- pca$x[, 1:15]
+pcs_TIC <- pca_TIC$x[, 1:15]
+pcs_RMS <- pca_RMS$x[, 1:15]
+```
+```{r}
+# PCA per mostra
+# Sense normalitzar:
+library(matrixStats) 
+# Per a cada mostra
+avg_by_sample <- do.call(
+  rbind,
+  lapply(unique(pixel_metadata$sample), function(s) {
+    # índex de cada mostra 
+    idx <- which(pixel_metadata$sample == s)
+    # mitjana de les intensitats de tots els píxels de cada mostra
+    colMeans2(log2(pks$intensity[idx,]+1), na.rm = TRUE)
+  })
+)
+# afegim l'identificador com a nom de les files
+rownames(avg_by_sample) <- unique(pixel_metadata$sample_id)
+
+# PCA de les intensitats mitjanes de cada mostra
+pca_s <- prcomp(avg_by_sample, center = TRUE, scale=TRUE)
+
+summary(pca_s)
+
+# Agrupem el resultat de la PCA:
+group <- ifelse(rownames(avg_by_sample) %in% dm_id, "DM", "CT")
+pca_df_s <- data.frame(
+  PC1 = pca_s$x[,1],
+  PC2 = pca_s$x[,2],
+  sample = rownames(avg_by_sample),
+  group = group
+)
+pca_df_s$label <- paste(pca_df_s$sample, pca_df_s$group)
+
+# Representació gràfica:
+library(ggrepel)
+ggplot(pca_df_s, aes(PC1, PC2, color = group, label = label)) +
+  geom_point(size = 4) +
+  geom_text_repel(size = 4) +
+  theme_minimal() +
+  labs(title = "PCA per mostra")
+
+```
+
+```{r}
+#Repetim el procediment per a la normalització TIC
+library(matrixStats) 
+avg_by_sampleTIC <- do.call(
+  rbind,
+  lapply(unique(pixel_metadata$sample), function(s) {
+    idx <- which(pixel_metadata$sample == s)
+    colMeans2(log2(pks$intensityTIC[idx,]+1), na.rm = TRUE)
+  })
+)
+
+rownames(avg_by_sampleTIC) <- unique(pixel_metadata$sample_id)
+
+pca_sTIC <- prcomp(avg_by_sampleTIC, center = TRUE, scale=TRUE)
+
+summary(pca_sTIC)
+
+group <- ifelse(rownames(avg_by_sampleTIC) %in% dm_id, "DM", "CT")
+pca_df_sTIC <- data.frame(
+  PC1 = pca_sTIC$x[,1],
+  PC2 = pca_sTIC$x[,2],
+  sample = rownames(avg_by_sampleTIC),
+  group = group
+)
+
+pca_df_sTIC$label <- paste(pca_df_sTIC$sample, pca_df_sTIC$group)
+
+library(ggrepel)
+ggplot(pca_df_sTIC, aes(PC1, PC2, color = group, label = label)) +
+  geom_point(size = 4) +
+  geom_text_repel(size = 4) +
+  theme_minimal() +
+  labs(title = "PCA per mostra (TIC)")
+
+```
+```{r}
+# Repetim per a la normalització RMS
+library(matrixStats) 
+avg_by_sampleRMS <- do.call(
+  rbind,
+  lapply(unique(pixel_metadata$sample), function(s) {
+    idx <- which(pixel_metadata$sample == s)
+    colMeans2(log2(pks$intensityRMS[idx,]+1), na.rm = TRUE)
+  })
+)
+
+rownames(avg_by_sampleRMS) <- unique(pixel_metadata$sample_id)
+
+pca_sRMS <- prcomp(avg_by_sampleRMS, center = TRUE, scale=TRUE)
+
+summary(pca_sRMS)
+
+group <- ifelse(rownames(avg_by_sampleRMS) %in% dm_id, "DM", "CT")
+pca_df_sRMS <- data.frame(
+  PC1 = pca_sRMS$x[,1],
+  PC2 = pca_sRMS$x[,2],
+  sample = rownames(avg_by_sample),
+  group = group
+)
+
+pca_df_sRMS$label <- paste(pca_df_sRMS$sample, pca_df_sRMS$group)
+
+library(ggrepel)
+ggplot(pca_df_sRMS, aes(PC1, PC2, color = group, label = label)) +
+  geom_point(size = 4) +
+  geom_text_repel(size = 4) +
+  theme_minimal() +
+  labs(title = "PCA per mostra (RMS)")
+
+```
+
+
+```{r}
+
+library(Rtsne)
+
+log2intensityTIC <- log2(pks$intensityTIC+1)
+log2intensityTIC_scaled <-scale(log2intensityTIC)
+
+set.seed(111)
+tsne_pcs_TIC <- Rtsne(pcs_TIC, dims = 2, perplexity = 30, check_duplicates = FALSE)
+tsne_TIC <- Rtsne(log2intensityTIC_scaled, dims=2, perplexity=30, check_duplicates=FALSE)
+
+pixel_metadata$tsne1 <- tsne_TIC$Y[,1]
+pixel_metadata$tsne2 <- tsne_TIC$Y[,2]
+
+ggplot(pixel_metadata, aes(x = tsne1, y = tsne2, color = group)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "t-SNE de les mostres") +
+  theme_minimal()
+
+pixel_metadata$tsne1_pcs <- tsne_pcs_TIC$Y[,1]
+pixel_metadata$tsne2_pcs <- tsne_pcs_TIC$Y[,2]
+
+ggplot(pixel_metadata, aes(x = tsne1_pcs, y = tsne2_pcs, color = group)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "t-SNE de les mostres (basat en 15 PCs)") +
+  theme_minimal()
+
+pcs_tsne_TIC <- tsne_TIC$Y[,1:2]
+pcs_pca_tsne_TIC <- tsne_pcs_TIC$Y[,1:2]
+
+```
+```{r}
+set.seed(111)
+tsne_sTIC <- Rtsne(scale(avg_by_sampleTIC), dims=2, perplexity = 5, check_duplicates=FALSE)
+
+group <- ifelse(rownames(avg_by_sampleTIC) %in% dm_id, "DM", "CT")
+
+tsne_df_sTIC <- data.frame(
+  tsne1 = tsne_sTIC$Y[,1],
+  tsne2 = tsne_sTIC$Y[,2],
+  sample = rownames(avg_by_sampleTIC),
+  group = group
+)
+
+tsne_df_sTIC$label <- paste(tsne_df_sTIC$sample, tsne_df_sTIC$group)
+
+library(ggrepel)
+ggplot(tsne_df_sTIC, aes(tsne1, tsne2, color = group, label = label)) +
+  geom_point(size = 4) +
+  geom_text_repel(size = 4) +
+  theme_minimal() +
+  labs(title = "t-SNE per mostra (TIC)")
+
+```
+
+```{r}
+library(uwot)
+umap_TIC <- umap(log2intensityTIC_scaled, n_neighbors = 15, n_components = 2, metric = "euclidean")
+
+pixel_metadata$umap1 <- umap_TIC[,1]
+pixel_metadata$umap2 <- umap_TIC[,2]
+
+ggplot(pixel_metadata, aes(x = umap1, y = umap2, color = group)) +
+  geom_point(size = 0.5, alpha = 0.2) +
+  labs(title = "UMAP de les mostres") +
+  theme_minimal()
+
+pcs_umap_TIC <- umap_TIC[,1:2]
+
+```
+
+```{r}
+library(cluster)
+# Puntuació Silhouette
+# Seleccionem 5 mostres a l'atzar (per a les 21 mostres requereix massa càrrega computacional)
+set.seed(111)
+sample_rand <- sample(unique(pixel_metadata$sample), 5)
+idx_rand <- which(pixel_metadata$sample %in% sample_rand)
+pcs_TIC_rand <- pcs_TIC[idx_rand, ]
+
+# Calculem la mitjana de les puntuacions Silhouette per a cada k (2-10)
+k_range <- 2:10
+sil_scores_TIC <- sapply(k_range, function(k) {
+  km <- kmeans(pcs_TIC_rand, centers = k, nstart = 10)
+  ss <- silhouette(km$cluster, dist(pcs_TIC_rand))
+  mean(ss[, 3])
+})
+# El nombre de k òptim correspondrà al valor més elevat (més pròxim a 1):
+data.frame(k = k_range, silhouette = sil_scores_TIC)
+```
+
+```{r}
+# Elbow method amb les dades normalitzades (TIC)
+set.seed(111)
+k_range <- 2:10
+# Càlcul de la suma de quadrats entre clústers
+wcss_TIC <- sapply(k_range, function(k) {
+  kmeans(pcs_TIC, centers = k, nstart = 5, iter.max = 20)$tot.withinss
+})
+
+# Gràfica del colze
+plot(k_range, wcss_TIC, type="b", pch=19, frame=FALSE, 
+     xlab="k",
+     ylab="WCSS",
+     main="Mètode del colze (TIC)")
+```
+
+\
+k=4
+
+```{r}
+set.seed(111)
+
+
+km_TIC <- kmeans(log2intensityTIC_scaled, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_TIC <- as.factor(km_TIC$cluster)
+
+km_pca_TIC <- kmeans(pcs_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_TIC <- as.factor(km_pca_TIC$cluster)
+
+km_tsne_TIC <- kmeans(pcs_tsne_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_tsne_TIC <- as.factor(km_tsne_TIC$cluster)
+
+km_pca_tsne_TIC <- kmeans(pcs_pca_tsne_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne_TIC$cluster)
+
+km_umap_TIC <- kmeans(pcs_umap_TIC, centers = 4, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_umap_TIC <- as.factor(km_umap_TIC$cluster)
+
+
+
+library(ggplot2)
+
+plot_clusters <- function(df, clusters, k_val) {
+  ggplot(df) +
+    geom_raster(aes(x = x, y = y, fill = .data[[clusters]])) +
+    facet_wrap(~ group + sample_id, scales = "free", ncol = 5) +
+    scale_fill_brewer(palette = "Set1", name = "Clúster") + 
+    theme_void() +
+    theme(
+      strip.text = element_text(size = 9, face = "bold"),
+      panel.spacing = unit(0.5, "lines"),
+      legend.position = "bottom"
+    ) +
+    labs(title = paste("k =", k_val, " -", clusters))
+}
+plot_clusters(pixel_metadata, "kmeans_TIC", 4)
+plot_clusters(pixel_metadata, "kmeans_pca_TIC", 4)
+plot_clusters(pixel_metadata, "kmeans_tsne_TIC", 4)
+plot_clusters(pixel_metadata, "kmeans_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata, "kmeans_umap_TIC", 4)
+
+```
+
+
+```{r}
+library(Rcpp)
+# El paquet està disponible al repositori Github, però al codi de definició de la funció fuzzyCmeans, apareix la següent línia de codi: dyn.load(list.files(find.package("fcmR"), ".dll", recursive = T,full.names = T)) Aquesta funciona perfectament per a Windows, però envia un error per a Linux, ja que en aquest sistema operatiu no s'utilitzen els fitxers .dll. Per utilitzar el paquet a Linux s'ha descarregat el github en una carpeta comprimida, s'ha descomprimit la carpeta i s'ha canviat ".dll" per ".so" al fitxer fcm.R, després s'ha procedit a la instal·lació des de la carpeta local.
+
+# Codi d'instal·lació per a Windows:
+#remotes::install_github("https://github.com/LlucSF/fcmR", force=TRUE)
+
+# Codi d'instal·lació per a Linux (s'ha de seleccionar la carpeta on està la informació del codi)
+#install.packages("~/R/x86_64-pc-linux-gnu-library/4.5/fcmR-main", 
+#repos = NULL, 
+#type = "source")
+
+#FCM per a les dades normalitzades
+library(fcmR)
+set.seed(111)
+fcm_pca_TIC <- fcmR::fuzzyCmeans(pcs_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_cluster_TIC <- fcm_pca_TIC$clustering$cluster
+pixel_metadata$fcm_pca_membership_TIC <- fcm_pca_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne_TIC <- fcmR::fuzzyCmeans(pcs_tsne_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_tsne_cluster_TIC <- fcm_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_tsne_membership_TIC <- fcm_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap_TIC <- fcmR::fuzzyCmeans(pcs_umap_TIC, numberOfClusters = 4, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_umap_cluster_TIC <- fcm_umap_TIC$clustering$cluster
+pixel_metadata$fcm_umap_membership_TIC <- fcm_umap_TIC$clustering$membership
+
+# Representació de l'agrupament:
+plot_fcm <- function(df, clusters, membership, k_val) {
+ggplot(df, aes(x = x, y = y)) +
+  geom_raster(aes(fill = as.factor(.data[[clusters]]), alpha = .data[[membership]])) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) +
+  scale_fill_brewer(palette = "Set1", name = "Clúster") +
+  scale_alpha_continuous(range = c(0, 1), name = "Membership") +
+  theme_void() +
+  theme(strip.text = element_text(size = 10, face = "bold"),
+    legend.position = "right",
+    panel.background = element_rect(fill = "white", color = NA)) +
+  labs(title = paste("k =", k_val, " -", clusters))
+}
+
+plot_fcm(pixel_metadata, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 4)
+plot_fcm(pixel_metadata, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 4)
+plot_fcm(pixel_metadata, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 4)
+plot_fcm(pixel_metadata, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 4)
+
+```
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca_TIC <- Mclust(pcs_TIC, 4)
+pixel_metadata$gmm_pca_TIC <- as.factor(gmm_pca_TIC$classification)
+gmm_pca_tsne_TIC <- Mclust(pcs_pca_tsne_TIC, 4)
+pixel_metadata$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne_TIC$classification)
+gmm_tsne_TIC <- Mclust(pcs_tsne_TIC, 4)
+pixel_metadata$gmm_tsne_TIC <- as.factor(gmm_tsne_TIC$classification)
+gmm_umap_TIC <- Mclust(pcs_umap_TIC, 4)
+pixel_metadata$gmm_umap_TIC <- as.factor(gmm_umap_TIC$classification)
+
+plot_clusters(pixel_metadata, "gmm_pca_TIC", 4)
+plot_clusters(pixel_metadata, "gmm_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata, "gmm_tsne_TIC", 4)
+plot_clusters(pixel_metadata, "gmm_umap_TIC", 4)
+
+
+```
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca_TIC <- dist(pcs_TIC, method = "euclidean")
+hclust_pca_TIC <- fastcluster::hclust(dist_pca_TIC, method = "complete")
+pixel_metadata$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca_TIC, k=4))
+
+dist_pca_tsne_TIC <- dist(pcs_pca_tsne_TIC, method = "euclidean")
+hclust_pca_tsne_TIC <- fastcluster::hclust(dist_pca_tsne_TIC, method = "complete")
+pixel_metadata$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne_TIC, k=4))
+
+dist_tsne_TIC <- dist(pcs_tsne_TIC, method = "euclidean")
+hclust_tsne_TIC <- fastcluster::hclust(dist_tsne_TIC, method = "complete")
+pixel_metadata$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne_TIC, k=4))
+
+dist_umap_TIC <- dist(pcs_umap_TIC, method = "euclidean")
+hclust_umap_TIC <- fastcluster::hclust(dist_umap_TIC, method = "complete")
+pixel_metadata$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap_TIC, k=4))
+
+```
+```{r}
+plot_clusters(pixel_metadata, "hclust_pca_TIC", 4)
+plot_clusters(pixel_metadata, "hclust_pca_tsne_TIC", 4)
+plot_clusters(pixel_metadata, "hclust_tsne_TIC", 4)
+plot_clusters(pixel_metadata, "hclust_umap_TIC", 4)
+```
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+plot_abundclust<- function(df, clusters, k_val) {
+
+  prop_data <- df %>%
+    group_by(facet_label, group, .data[[clusters]]) %>%
+    summarise(n_pixels = n(), .groups = "drop") %>%
+    group_by(facet_label) %>%
+    mutate(
+      total_pixels = sum(n_pixels),
+      perc_pixels = 100 * n_pixels / total_pixels
+    ) %>%
+    ungroup()
+
+  ggplot(prop_data, 
+         aes(x = group, 
+             y = perc_pixels, 
+             fill = group)) +
+    geom_boxplot(alpha = 0.3, outlier.shape = NA) + 
+    geom_jitter(aes(color = group), width = 0.15, alpha = 0.7, size = 1) +
+    facet_wrap(as.formula(paste("~", clusters)), scales = "free_y", nrow = 1) + 
+    stat_compare_means(method = "wilcox.test", 
+                       label = "p.format", 
+                       label.x = 1.5, size=2.5) +  
+    scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+    scale_color_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+    labs(
+      x = "Grup",
+      y = "% de píxels",
+      title = paste("k =", k_val, "- Abundància", clusters)
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none",
+          strip.text = element_text(face = "bold", size = 11))
+}
+
+plot_abundclust(pixel_metadata, "kmeans_TIC", 4)
+plot_abundclust(pixel_metadata, "kmeans_pca_TIC", 4)
+plot_abundclust(pixel_metadata, "kmeans_pca_tsne_TIC", 4)
+plot_abundclust(pixel_metadata, "kmeans_tsne_TIC", 4)
+plot_abundclust(pixel_metadata, "kmeans_umap_TIC", 4)
+
+plot_abundclust(pixel_metadata, "fcm_pca_cluster_TIC", 4)
+plot_abundclust(pixel_metadata, "fcm_pca_tsne_cluster_TIC", 4)
+plot_abundclust(pixel_metadata, "fcm_tsne_cluster_TIC", 4)
+plot_abundclust(pixel_metadata, "fcm_umap_cluster_TIC", 4)
+
+plot_abundclust(pixel_metadata, "gmm_pca_TIC", 4)
+plot_abundclust(pixel_metadata, "gmm_pca_tsne_TIC", 4)
+plot_abundclust(pixel_metadata, "gmm_tsne_TIC", 4)
+plot_abundclust(pixel_metadata, "gmm_umap_TIC", 4)
+
+plot_abundclust(pixel_metadata, "hclust_pca_TIC", 4)
+plot_abundclust(pixel_metadata, "hclust_pca_tsne_TIC", 4)
+plot_abundclust(pixel_metadata, "hclust_tsne_TIC", 4)
+plot_abundclust(pixel_metadata, "hclust_umap_TIC", 4)
+```
+
+k=6
+
+```{r}
+set.seed(111)
+
+
+km_TIC <- kmeans(log2intensityTIC_scaled, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_TIC <- as.factor(km_TIC$cluster)
+
+km_pca_TIC <- kmeans(pcs_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_TIC <- as.factor(km_pca_TIC$cluster)
+
+km_tsne_TIC <- kmeans(pcs_tsne_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_tsne_TIC <- as.factor(km_tsne_TIC$cluster)
+
+km_pca_tsne_TIC <- kmeans(pcs_pca_tsne_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne_TIC$cluster)
+
+km_umap_TIC <- kmeans(pcs_umap_TIC, centers = 6, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_umap_TIC <- as.factor(km_umap_TIC$cluster)
+
+
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata, "kmeans_TIC", 6)
+plot_clusters(pixel_metadata, "kmeans_pca_TIC", 6)
+plot_clusters(pixel_metadata, "kmeans_tsne_TIC", 6)
+plot_clusters(pixel_metadata, "kmeans_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata, "kmeans_umap_TIC", 6)
+
+```
+
+
+```{r}
+library(Rcpp)
+# El paquet està disponible al repositori Github, però al codi de definició de la funció fuzzyCmeans, apareix la següent línia de codi: dyn.load(list.files(find.package("fcmR"), ".dll", recursive = T,full.names = T)) Aquesta funciona perfectament per a Windows, però envia un error per a Linux, ja que en aquest sistema operatiu no s'utilitzen els fitxers .dll. Per utilitzar el paquet a Linux s'ha descarregat el github en una carpeta comprimida, s'ha descomprimit la carpeta i s'ha canviat ".dll" per ".so" al fitxer fcm.R, després s'ha procedit a la instal·lació des de la carpeta local.
+
+# Codi d'instal·lació per a Windows:
+#remotes::install_github("https://github.com/LlucSF/fcmR", force=TRUE)
+
+# Codi d'instal·lació per a Linux (s'ha de seleccionar la carpeta on està la informació del codi)
+#install.packages("~/R/x86_64-pc-linux-gnu-library/4.5/fcmR-main", 
+#repos = NULL, 
+#type = "source")
+
+#FCM per a les dades normalitzades
+library(fcmR)
+set.seed(111)
+fcm_pca_TIC <- fcmR::fuzzyCmeans(pcs_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_cluster_TIC <- fcm_pca_TIC$clustering$cluster
+pixel_metadata$fcm_pca_membership_TIC <- fcm_pca_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne_TIC <- fcmR::fuzzyCmeans(pcs_tsne_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_tsne_cluster_TIC <- fcm_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_tsne_membership_TIC <- fcm_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap_TIC <- fcmR::fuzzyCmeans(pcs_umap_TIC, numberOfClusters = 6, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_umap_cluster_TIC <- fcm_umap_TIC$clustering$cluster
+pixel_metadata$fcm_umap_membership_TIC <- fcm_umap_TIC$clustering$membership
+
+# Representació de l'agrupament:
+
+plot_fcm(pixel_metadata, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 6)
+plot_fcm(pixel_metadata, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 6)
+plot_fcm(pixel_metadata, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 6)
+
+```
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca_TIC <- Mclust(pcs_TIC, 6)
+pixel_metadata$gmm_pca_TIC <- as.factor(gmm_pca_TIC$classification)
+gmm_pca_tsne_TIC <- Mclust(pcs_pca_tsne_TIC, 6)
+pixel_metadata$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne_TIC$classification)
+gmm_tsne_TIC <- Mclust(pcs_tsne_TIC, 6)
+pixel_metadata$gmm_tsne_TIC <- as.factor(gmm_tsne_TIC$classification)
+gmm_umap_TIC <- Mclust(pcs_umap_TIC, 6)
+pixel_metadata$gmm_umap_TIC <- as.factor(gmm_umap_TIC$classification)
+
+plot_clusters(pixel_metadata, "gmm_pca_TIC", 6)
+plot_clusters(pixel_metadata, "gmm_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata, "gmm_tsne_TIC", 6)
+plot_clusters(pixel_metadata, "gmm_umap_TIC", 6)
+
+
+```
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca_TIC <- dist(pcs_TIC, method = "euclidean")
+hclust_pca_TIC <- fastcluster::hclust(dist_pca_TIC, method = "complete")
+pixel_metadata$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca_TIC, k=6))
+
+dist_pca_tsne_TIC <- dist(pcs_pca_tsne_TIC, method = "euclidean")
+hclust_pca_tsne_TIC <- fastcluster::hclust(dist_pca_tsne_TIC, method = "complete")
+pixel_metadata$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne_TIC, k=6))
+
+dist_tsne_TIC <- dist(pcs_tsne_TIC, method = "euclidean")
+hclust_tsne_TIC <- fastcluster::hclust(dist_tsne_TIC, method = "complete")
+pixel_metadata$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne_TIC, k=6))
+
+dist_umap_TIC <- dist(pcs_umap_TIC, method = "euclidean")
+hclust_umap_TIC <- fastcluster::hclust(dist_umap_TIC, method = "complete")
+pixel_metadata$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap_TIC, k=6))
+
+```
+```{r}
+plot_clusters(pixel_metadata, "hclust_pca_TIC", 6)
+plot_clusters(pixel_metadata, "hclust_pca_tsne_TIC", 6)
+plot_clusters(pixel_metadata, "hclust_tsne_TIC", 6)
+plot_clusters(pixel_metadata, "hclust_umap_TIC", 6)
+```
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+
+plot_abundclust(pixel_metadata, "kmeans_TIC", 6)
+plot_abundclust(pixel_metadata, "kmeans_pca_TIC", 6)
+plot_abundclust(pixel_metadata, "kmeans_pca_tsne_TIC",6)
+plot_abundclust(pixel_metadata, "kmeans_tsne_TIC",6)
+plot_abundclust(pixel_metadata, "kmeans_umap_TIC",6)
+
+plot_abundclust(pixel_metadata, "fcm_pca_cluster_TIC",6)
+plot_abundclust(pixel_metadata, "fcm_pca_tsne_cluster_TIC",6)
+plot_abundclust(pixel_metadata, "fcm_tsne_cluster_TIC",6)
+plot_abundclust(pixel_metadata, "fcm_umap_cluster_TIC",6)
+
+plot_abundclust(pixel_metadata, "gmm_pca_TIC",6)
+plot_abundclust(pixel_metadata, "gmm_pca_tsne_TIC",6)
+plot_abundclust(pixel_metadata, "gmm_tsne_TIC",6)
+plot_abundclust(pixel_metadata, "gmm_umap_TIC",6)
+
+plot_abundclust(pixel_metadata, "hclust_pca_TIC",6)
+plot_abundclust(pixel_metadata, "hclust_pca_tsne_TIC",6)
+plot_abundclust(pixel_metadata, "hclust_tsne_TIC",6)
+plot_abundclust(pixel_metadata, "hclust_umap_TIC",6)
+```
+
+k=8
+
+```{r}
+set.seed(111)
+
+
+km_TIC <- kmeans(log2intensityTIC_scaled, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_TIC <- as.factor(km_TIC$cluster)
+
+km_pca_TIC <- kmeans(pcs_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_TIC <- as.factor(km_pca_TIC$cluster)
+
+km_tsne_TIC <- kmeans(pcs_tsne_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_tsne_TIC <- as.factor(km_tsne_TIC$cluster)
+
+km_pca_tsne_TIC <- kmeans(pcs_pca_tsne_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne_TIC$cluster)
+
+km_umap_TIC <- kmeans(pcs_umap_TIC, centers = 8, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_umap_TIC <- as.factor(km_umap_TIC$cluster)
+
+
+
+library(ggplot2)
+
+plot_clusters(pixel_metadata, "kmeans_TIC",8)
+plot_clusters(pixel_metadata, "kmeans_pca_TIC",8)
+plot_clusters(pixel_metadata, "kmeans_tsne_TIC",8)
+plot_clusters(pixel_metadata, "kmeans_pca_tsne_TIC",8)
+plot_clusters(pixel_metadata, "kmeans_umap_TIC",8)
+
+```
+
+
+```{r}
+library(Rcpp)
+# El paquet està disponible al repositori Github, però al codi de definició de la funció fuzzyCmeans, apareix la següent línia de codi: dyn.load(list.files(find.package("fcmR"), ".dll", recursive = T,full.names = T)) Aquesta funciona perfectament per a Windows, però envia un error per a Linux, ja que en aquest sistema operatiu no s'utilitzen els fitxers .dll. Per utilitzar el paquet a Linux s'ha descarregat el github en una carpeta comprimida, s'ha descomprimit la carpeta i s'ha canviat ".dll" per ".so" al fitxer fcm.R, després s'ha procedit a la instal·lació des de la carpeta local.
+
+# Codi d'instal·lació per a Windows:
+#remotes::install_github("https://github.com/LlucSF/fcmR", force=TRUE)
+
+# Codi d'instal·lació per a Linux (s'ha de seleccionar la carpeta on està la informació del codi)
+#install.packages("~/R/x86_64-pc-linux-gnu-library/4.5/fcmR-main", 
+#repos = NULL, 
+#type = "source")
+
+#FCM per a les dades normalitzades
+library(fcmR)
+set.seed(111)
+fcm_pca_TIC <- fcmR::fuzzyCmeans(pcs_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_cluster_TIC <- fcm_pca_TIC$clustering$cluster
+pixel_metadata$fcm_pca_membership_TIC <- fcm_pca_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne_TIC <- fcmR::fuzzyCmeans(pcs_tsne_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_tsne_cluster_TIC <- fcm_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_tsne_membership_TIC <- fcm_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap_TIC <- fcmR::fuzzyCmeans(pcs_umap_TIC, numberOfClusters = 8, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_umap_cluster_TIC <- fcm_umap_TIC$clustering$cluster
+pixel_metadata$fcm_umap_membership_TIC <- fcm_umap_TIC$clustering$membership
+
+# Representació de l'agrupament:
+
+plot_fcm(pixel_metadata, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC",8)
+plot_fcm(pixel_metadata, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC",8)
+plot_fcm(pixel_metadata, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC",8)
+plot_fcm(pixel_metadata, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC",8)
+
+```
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca_TIC <- Mclust(pcs_TIC, 8)
+pixel_metadata$gmm_pca_TIC <- as.factor(gmm_pca_TIC$classification)
+gmm_pca_tsne_TIC <- Mclust(pcs_pca_tsne_TIC, 8)
+pixel_metadata$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne_TIC$classification)
+gmm_tsne_TIC <- Mclust(pcs_tsne_TIC, 8)
+pixel_metadata$gmm_tsne_TIC <- as.factor(gmm_tsne_TIC$classification)
+gmm_umap_TIC <- Mclust(pcs_umap_TIC, 8)
+pixel_metadata$gmm_umap_TIC <- as.factor(gmm_umap_TIC$classification)
+
+plot_clusters(pixel_metadata, "gmm_pca_TIC",8)
+plot_clusters(pixel_metadata, "gmm_pca_tsne_TIC",8)
+plot_clusters(pixel_metadata, "gmm_tsne_TIC",8)
+plot_clusters(pixel_metadata, "gmm_umap_TIC",8)
+
+
+```
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca_TIC <- dist(pcs_TIC, method = "euclidean")
+hclust_pca_TIC <- fastcluster::hclust(dist_pca_TIC, method = "complete")
+pixel_metadata$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca_TIC, k=8))
+
+dist_pca_tsne_TIC <- dist(pcs_pca_tsne_TIC, method = "euclidean")
+hclust_pca_tsne_TIC <- fastcluster::hclust(dist_pca_tsne_TIC, method = "complete")
+pixel_metadata$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne_TIC, k=8))
+
+dist_tsne_TIC <- dist(pcs_tsne_TIC, method = "euclidean")
+hclust_tsne_TIC <- fastcluster::hclust(dist_tsne_TIC, method = "complete")
+pixel_metadata$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne_TIC, k=8))
+
+dist_umap_TIC <- dist(pcs_umap_TIC, method = "euclidean")
+hclust_umap_TIC <- fastcluster::hclust(dist_umap_TIC, method = "complete")
+pixel_metadata$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap_TIC, k=8))
+
+```
+```{r}
+plot_clusters(pixel_metadata, "hclust_pca_TIC",8)
+plot_clusters(pixel_metadata, "hclust_pca_tsne_TIC",8)
+plot_clusters(pixel_metadata, "hclust_tsne_TIC",8)
+plot_clusters(pixel_metadata, "hclust_umap_TIC",8)
+```
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+plot_abundclust(pixel_metadata, "kmeans_TIC",8)
+plot_abundclust(pixel_metadata, "kmeans_pca_TIC",8)
+plot_abundclust(pixel_metadata, "kmeans_pca_tsne_TIC",8)
+plot_abundclust(pixel_metadata, "kmeans_tsne_TIC",8)
+plot_abundclust(pixel_metadata, "kmeans_umap_TIC",8)
+
+plot_abundclust(pixel_metadata, "fcm_pca_cluster_TIC",8)
+plot_abundclust(pixel_metadata, "fcm_pca_tsne_cluster_TIC",8)
+plot_abundclust(pixel_metadata, "fcm_tsne_cluster_TIC",8)
+plot_abundclust(pixel_metadata, "fcm_umap_cluster_TIC",8)
+
+plot_abundclust(pixel_metadata, "gmm_pca_TIC",8)
+plot_abundclust(pixel_metadata, "gmm_pca_tsne_TIC",8)
+plot_abundclust(pixel_metadata, "gmm_tsne_TIC",8)
+plot_abundclust(pixel_metadata, "gmm_umap_TIC",8)
+
+plot_abundclust(pixel_metadata, "hclust_pca_TIC",8)
+plot_abundclust(pixel_metadata, "hclust_pca_tsne_TIC",8)
+plot_abundclust(pixel_metadata, "hclust_tsne_TIC",8)
+plot_abundclust(pixel_metadata, "hclust_umap_TIC",8)
+```
+
+k=10
+
+```{r}
+set.seed(111)
+
+
+km_TIC <- kmeans(log2intensityTIC_scaled, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_TIC <- as.factor(km_TIC$cluster)
+
+km_pca_TIC <- kmeans(pcs_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_TIC <- as.factor(km_pca_TIC$cluster)
+
+km_tsne_TIC <- kmeans(pcs_tsne_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_tsne_TIC <- as.factor(km_tsne_TIC$cluster)
+
+km_pca_tsne_TIC <- kmeans(pcs_pca_tsne_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_pca_tsne_TIC <- as.factor(km_pca_tsne_TIC$cluster)
+
+km_umap_TIC <- kmeans(pcs_umap_TIC, centers = 10, nstart = 15, iter.max = 50)
+pixel_metadata$kmeans_umap_TIC <- as.factor(km_umap_TIC$cluster)
+
+
+
+library(ggplot2)
+
+
+plot_clusters(pixel_metadata, "kmeans_TIC",10)
+plot_clusters(pixel_metadata, "kmeans_pca_TIC", 10)
+plot_clusters(pixel_metadata, "kmeans_tsne_TIC", 10)
+plot_clusters(pixel_metadata, "kmeans_pca_tsne_TIC",10)
+plot_clusters(pixel_metadata, "kmeans_umap_TIC", 10)
+
+```
+
+
+```{r}
+library(Rcpp)
+# El paquet està disponible al repositori Github, però al codi de definició de la funció fuzzyCmeans, apareix la següent línia de codi: dyn.load(list.files(find.package("fcmR"), ".dll", recursive = T,full.names = T)) Aquesta funciona perfectament per a Windows, però envia un error per a Linux, ja que en aquest sistema operatiu no s'utilitzen els fitxers .dll. Per utilitzar el paquet a Linux s'ha descarregat el github en una carpeta comprimida, s'ha descomprimit la carpeta i s'ha canviat ".dll" per ".so" al fitxer fcm.R, després s'ha procedit a la instal·lació des de la carpeta local.
+
+# Codi d'instal·lació per a Windows:
+#remotes::install_github("https://github.com/LlucSF/fcmR", force=TRUE)
+
+# Codi d'instal·lació per a Linux (s'ha de seleccionar la carpeta on està la informació del codi)
+#install.packages("~/R/x86_64-pc-linux-gnu-library/4.5/fcmR-main", 
+#repos = NULL, 
+#type = "source")
+
+#FCM per a les dades normalitzades
+library(fcmR)
+set.seed(111)
+fcm_pca_TIC <- fcmR::fuzzyCmeans(pcs_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_cluster_TIC <- fcm_pca_TIC$clustering$cluster
+pixel_metadata$fcm_pca_membership_TIC <- fcm_pca_TIC$clustering$membership
+
+### 
+set.seed(111)
+fcm_tsne_TIC <- fcmR::fuzzyCmeans(pcs_tsne_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_tsne_cluster_TIC <- fcm_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_tsne_membership_TIC <- fcm_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_pca_tsne_TIC <- fcmR::fuzzyCmeans(pcs_pca_tsne_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_pca_tsne_cluster_TIC <- fcm_pca_tsne_TIC$clustering$cluster
+pixel_metadata$fcm_pca_tsne_membership_TIC <- fcm_pca_tsne_TIC$clustering$membership
+###
+
+set.seed(111)
+fcm_umap_TIC <- fcmR::fuzzyCmeans(pcs_umap_TIC, numberOfClusters = 10, m=2, maxIterations = 20)
+# Desem les dades a la metadata dels pixels (clústers i grau de pertinença (membership))
+pixel_metadata$fcm_umap_cluster_TIC <- fcm_umap_TIC$clustering$cluster
+pixel_metadata$fcm_umap_membership_TIC <- fcm_umap_TIC$clustering$membership
+
+plot_fcm(pixel_metadata, "fcm_pca_cluster_TIC", "fcm_pca_membership_TIC", 10)
+plot_fcm(pixel_metadata, "fcm_tsne_cluster_TIC", "fcm_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata, "fcm_pca_tsne_cluster_TIC", "fcm_pca_tsne_membership_TIC", 10)
+plot_fcm(pixel_metadata, "fcm_umap_cluster_TIC", "fcm_umap_membership_TIC", 10)
+
+```
+
+```{r}
+
+library(RANN)
+library(dplyr)
+library(mclust)
+
+gmm_pca_TIC <- Mclust(pcs_TIC, 10)
+pixel_metadata$gmm_pca_TIC <- as.factor(gmm_pca_TIC$classification)
+gmm_pca_tsne_TIC <- Mclust(pcs_pca_tsne_TIC, 10)
+pixel_metadata$gmm_pca_tsne_TIC <- as.factor(gmm_pca_tsne_TIC$classification)
+gmm_tsne_TIC <- Mclust(pcs_tsne_TIC, 10)
+pixel_metadata$gmm_tsne_TIC <- as.factor(gmm_tsne_TIC$classification)
+gmm_umap_TIC <- Mclust(pcs_umap_TIC, 10)
+pixel_metadata$gmm_umap_TIC <- as.factor(gmm_umap_TIC$classification)
+
+plot_clusters(pixel_metadata, "gmm_pca_TIC", 10)
+plot_clusters(pixel_metadata, "gmm_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata, "gmm_tsne_TIC", 10)
+plot_clusters(pixel_metadata, "gmm_umap_TIC", 10)
+
+
+```
+
+```{r}
+set.seed(111)
+library(fastcluster)
+dist_pca_TIC <- dist(pcs_TIC, method = "euclidean")
+hclust_pca_TIC <- fastcluster::hclust(dist_pca_TIC, method = "complete")
+pixel_metadata$hclust_pca_TIC <- as.factor(stats::cutree(hclust_pca_TIC, k=10))
+
+dist_pca_tsne_TIC <- dist(pcs_pca_tsne_TIC, method = "euclidean")
+hclust_pca_tsne_TIC <- fastcluster::hclust(dist_pca_tsne_TIC, method = "complete")
+pixel_metadata$hclust_pca_tsne_TIC <- as.factor(stats::cutree(hclust_pca_tsne_TIC, k=10))
+
+dist_tsne_TIC <- dist(pcs_tsne_TIC, method = "euclidean")
+hclust_tsne_TIC <- fastcluster::hclust(dist_tsne_TIC, method = "complete")
+pixel_metadata$hclust_tsne_TIC <- as.factor(stats::cutree(hclust_tsne_TIC, k=10))
+
+dist_umap_TIC <- dist(pcs_umap_TIC, method = "euclidean")
+hclust_umap_TIC <- fastcluster::hclust(dist_umap_TIC, method = "complete")
+pixel_metadata$hclust_umap_TIC <- as.factor(stats::cutree(hclust_umap_TIC, k=10))
+
+```
+```{r}
+plot_clusters(pixel_metadata, "hclust_pca_TIC", 10)
+plot_clusters(pixel_metadata, "hclust_pca_tsne_TIC", 10)
+plot_clusters(pixel_metadata, "hclust_tsne_TIC", 10)
+plot_clusters(pixel_metadata, "hclust_umap_TIC", 10)
+```
+
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+
+
+plot_abundclust(pixel_metadata, "kmeans_TIC", 10)
+plot_abundclust(pixel_metadata, "kmeans_pca_TIC", 10)
+plot_abundclust(pixel_metadata, "kmeans_pca_tsne_TIC", 10)
+plot_abundclust(pixel_metadata, "kmeans_tsne_TIC", 10)
+plot_abundclust(pixel_metadata, "kmeans_umap_TIC", 10)
+
+plot_abundclust(pixel_metadata, "fcm_pca_cluster_TIC", 10)
+plot_abundclust(pixel_metadata, "fcm_pca_tsne_cluster_TIC", 10)
+plot_abundclust(pixel_metadata, "fcm_tsne_cluster_TIC", 10)
+plot_abundclust(pixel_metadata, "fcm_umap_cluster_TIC", 10)
+
+plot_abundclust(pixel_metadata, "gmm_pca_TIC", 10)
+plot_abundclust(pixel_metadata, "gmm_pca_tsne_TIC", 10)
+plot_abundclust(pixel_metadata, "gmm_tsne_TIC", 10)
+plot_abundclust(pixel_metadata, "gmm_umap_TIC", 10)
+
+plot_abundclust(pixel_metadata, "hclust_pca_TIC", 10)
+plot_abundclust(pixel_metadata, "hclust_pca_tsne_TIC", 10)
+plot_abundclust(pixel_metadata, "hclust_tsne_TIC", 10)
+plot_abundclust(pixel_metadata, "hclust_umap_TIC", 10)
+```
+
+## Anotació
+
+```{r}
+library(tidyverse)
+db <- read_csv("Chebi_HMDB_Peptides_Lipids_2025_clean.csv")
+db <- db |>
+  filter(!is.na(MonoisotopicMass))
+
+library(BiocGenerics)
+library(S4Vectors)
+library(MetaboAnnotation)
+library(limma)
+library(MetaboCoreUtils)
+
+parm <- Mass2MzParam(adducts = c("[M+H]+", "[M+Na]+", "[M+K]+"),
+                           tolerance = 0.05, ppm = 30)
+
+res_mz <- data.frame(mz = pks$mass)
+tg_mz <- data.frame(name = db$Name, exactmass = db$MonoisotopicMass, class = db$MAIN_CLASS)
+
+match_mz_compounds <- MetaboAnnotation::matchValues(res_mz,tg_mz, param= parm)
+matched_data <- data.frame(matchedData(match_mz_compounds), optional=TRUE)
+
+matched_best <- matched_data %>%
+  filter(!is.na(target_name)) %>%
+  filter(!is.na(target_class)) %>%
+  group_by(mz) %>%
+  slice_min(ppm_error, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+colnames(log2intensityTIC) <- pks$mass 
+cols_an <- which(colnames(log2intensityTIC) %in% matched_best$mz)
+log2intensityTIC_scaled_annot <- log2intensityTIC[, cols_an]
+
+df_counts <- as.data.frame(log2intensityTIC) %>%
+  mutate(sample = pixel_metadata$sample, group = pixel_metadata$group) %>%
+  pivot_longer(cols = -c(sample, group), names_to = "mz", values_to = "intensity") %>%
+  mutate(mz = as.numeric(mz)) %>%
+  left_join(matched_best %>% select(mz, target_class), by = "mz") %>% 
+  filter(!is.na(target_class))
+
+mean_intensity_sample <- df_counts %>%
+  group_by(sample, group, target_class) %>%
+  summarise(
+    mean_int = mean(intensity, na.rm = TRUE),
+    n_pixels = n(),
+    .groups = "drop"
+  )
+
+mean_intensity_group <- mean_intensity_sample %>%
+  group_by(group, target_class) %>%
+  summarise(
+    avg_intensity = mean(mean_int, na.rm = TRUE),
+    sd_intensity = sd(mean_int, na.rm=TRUE),
+    total_pixels_in_group = sum(n_pixels),
+    .groups = "drop"
+  )
+
+
+ggplot(mean_intensity_sample, 
+       aes(x = group, y = mean_int, fill = group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5) +
+  facet_wrap(~target_class, scales = "free_y") +
+  scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+  theme_minimal() +
+  labs(
+    title = "Intensitat mitjana",
+    y = "Intensitat",
+    x = "Grup"
+  ) +
+  theme(strip.text = element_text(size = 8)) 
+ 
+
+ggplot(mean_intensity_group, 
+       aes(x = reorder(target_class, avg_intensity), 
+           y = avg_intensity, 
+           fill = group)) +
+  geom_col(position = position_dodge(width = 0.8), color = "black", width = 0.7) +
+  geom_errorbar(aes(ymin = avg_intensity - sd_intensity, 
+                    ymax = avg_intensity + sd_intensity),
+                position = position_dodge(width = 0.8), 
+                width = 0.25, alpha = 0.5) +
+  coord_flip() +
+  scale_fill_manual(values = c("DM" = "#E41A1C", "CT" = "#377EB8")) +
+  theme_minimal() +
+  labs(
+    title = "Intensitat mitjana",
+    x = "Classe química",
+    y = "Intensitat mitjana",
+    fill = "Grup"
+  ) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    legend.position = "bottom"
+  )
+
+```
+
+```{r}
+isopr_idx <- which(matched_best$target_class == "Isoprenoids [PR01]")
+matched_best[isopr_idx,]
+
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log2intensityTIC[, "697.612408090053"])) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "Intensitat(TIC)"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+
+ster_idx <- which(matched_best$target_class == "Sterols [ST01]")
+matched_best[ster_idx,]
+
+ggplot(pixel_metadata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log2intensityTIC[, "641.522728947171"])) +
+  facet_wrap(~ group + sample_id, scales = "free", ncol = 5) + 
+  scale_fill_viridis_c(
+    option = "inferno", 
+    name = "Intensitat(TIC)"
+  ) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 9, face = "bold"),
+    panel.spacing = unit(0.5, "lines")
+  )
+
+```
